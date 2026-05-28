@@ -1,0 +1,105 @@
+package commands
+
+import (
+	"flag"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/massivemoose/backlot/internal/gitutil"
+	"github.com/massivemoose/backlot/internal/paths"
+)
+
+func runStatus(args []string, stdout, stderr io.Writer) error {
+	fs := newFlagSet("status", stderr)
+	rootFlag := fs.String("root", "", "Backlot root path")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		return flag.ErrHelp
+	}
+
+	info, err := collectProjectInfo(*rootFlag)
+	if err != nil {
+		return err
+	}
+
+	excluded := "no"
+	if info.Excluded {
+		excluded = "yes"
+	}
+
+	fmt.Fprintln(stdout, "Backlot")
+	fmt.Fprintln(stdout)
+	fmt.Fprintf(stdout, "Public repo:   %s\n", info.RepoRoot)
+	fmt.Fprintf(stdout, "Origin:        %s\n", info.Origin)
+	fmt.Fprintf(stdout, "Project key:   %s\n", info.ProjectKey)
+	fmt.Fprintf(stdout, "State dir:     %s\n", info.StateDir)
+	fmt.Fprintf(stdout, "Link:          %s\n", info.LinkDescription)
+	fmt.Fprintf(stdout, "Excluded:      %s\n", excluded)
+	fmt.Fprintf(stdout, "State repo:    %s\n", info.StateRepo)
+	return nil
+}
+
+type projectInfo struct {
+	RootFlag        string
+	BacklotRoot     string
+	RepoRoot        string
+	Origin          string
+	ProjectKey      string
+	StateDir        string
+	LinkDescription string
+	Excluded        bool
+	StateRepo       string
+}
+
+func collectProjectInfo(rootFlag string) (projectInfo, error) {
+	var info projectInfo
+	var err error
+	info.RootFlag = rootFlag
+	info.BacklotRoot, err = paths.BacklotRoot(rootFlag)
+	if err != nil {
+		return info, err
+	}
+	current, err := cwd()
+	if err != nil {
+		return info, err
+	}
+	info.RepoRoot, err = gitutil.RepoRoot(current)
+	if err != nil {
+		return info, err
+	}
+	info.Origin, err = gitutil.OriginURL(info.RepoRoot)
+	if err != nil {
+		return info, err
+	}
+	info.ProjectKey, err = gitutil.NormalizeOrigin(info.Origin)
+	if err != nil {
+		return info, err
+	}
+	info.StateDir = paths.ProjectStateDir(info.BacklotRoot, info.ProjectKey)
+	info.LinkDescription = paths.LinkDescription(filepath.Join(info.RepoRoot, ".backlot"), info.StateDir)
+	info.Excluded, _ = paths.ExcludeContains(info.RepoRoot, ".backlot")
+	info.StateRepo = stateRepoStatus(info.BacklotRoot)
+	return info, nil
+}
+
+func stateRepoStatus(root string) string {
+	if _, err := os.Stat(root); err != nil {
+		return "missing"
+	}
+	if !gitutil.IsGitRepoRoot(root) {
+		return "not initialized"
+	}
+	status, err := gitutil.RunGit(root, "status", "--short")
+	if err != nil {
+		return "error"
+	}
+	if strings.TrimSpace(status) == "" {
+		return "clean"
+	}
+	return "dirty"
+}
