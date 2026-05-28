@@ -15,6 +15,10 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		printUsage(stderr)
 		return 2
 	}
+	if args[0] == "--help" || args[0] == "-h" {
+		printUsage(stdout)
+		return 0
+	}
 
 	commands := map[string]commandFunc{
 		"init":    runInit,
@@ -32,7 +36,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	}
 	if err := cmd(args[1:], stdout, stderr); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
-			return 2
+			return 0
 		}
 		fmt.Fprintln(stderr, err)
 		return 1

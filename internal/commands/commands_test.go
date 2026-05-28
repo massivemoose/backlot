@@ -10,6 +10,21 @@ import (
 	"testing"
 )
 
+func TestHelpExitsSuccessfully(t *testing.T) {
+	tests := [][]string{
+		{"--help"},
+		{"-h"},
+		{"init", "--help"},
+	}
+
+	for _, args := range tests {
+		var out, errOut bytes.Buffer
+		if code := Run(args, &out, &errOut); code != 0 {
+			t.Fatalf("Run(%v) exit code = %d, stderr = %s", args, code, errOut.String())
+		}
+	}
+}
+
 func TestInitCreatesGitRepoAndPreservesExistingOrigin(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not installed")
