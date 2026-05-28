@@ -31,7 +31,7 @@ func runSync(args []string, stdout, stderr io.Writer) error {
 	}
 	status, err := gitutil.RunGit(root, "status", "--short")
 	if err != nil {
-		return err
+		return syncGitError("status check", root, err)
 	}
 	if strings.TrimSpace(status) == "" {
 		fmt.Fprintln(stdout, "Backlot state is clean.")
@@ -39,11 +39,11 @@ func runSync(args []string, stdout, stderr io.Writer) error {
 	}
 
 	if _, err := gitutil.RunGit(root, "add", "-A"); err != nil {
-		return err
+		return syncGitError("staging private state", root, err)
 	}
 	if _, err := gitutil.RunGit(root, "commit", "-m", *message); err != nil {
 		if !isNothingToCommit(err) {
-			return err
+			return syncGitError("committing private state", root, err)
 		}
 		fmt.Fprintln(stdout, "Backlot state is clean.")
 		return nil
@@ -53,13 +53,17 @@ func runSync(args []string, stdout, stderr io.Writer) error {
 		return nil
 	}
 	if _, err := gitutil.RunGit(root, "pull", "--rebase"); err != nil {
-		return err
+		return syncGitError("pull --rebase", root, err)
 	}
 	if _, err := gitutil.RunGit(root, "push"); err != nil {
-		return err
+		return syncGitError("push", root, err)
 	}
 	fmt.Fprintln(stdout, "Backlot state synced.")
 	return nil
+}
+
+func syncGitError(operation string, root string, err error) error {
+	return fmt.Errorf("%s failed while syncing Backlot root %s: %w", operation, root, err)
 }
 
 func isNothingToCommit(err error) bool {

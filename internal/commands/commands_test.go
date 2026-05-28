@@ -342,6 +342,38 @@ func TestSyncDirtyNoRemoteCommitsLocallyOnlyInBacklotRoot(t *testing.T) {
 	}
 }
 
+func TestSyncRemoteFailureIncludesOperationContext(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+
+	tmp := t.TempDir()
+	state := filepath.Join(tmp, "state")
+	missingRemote := filepath.Join(tmp, "missing-remote")
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"init", "--root", state}, &out, &errOut); code != 0 {
+		t.Fatalf("init exit code = %d, stderr = %s", code, errOut.String())
+	}
+	configureGitIdentity(t, state)
+	mustRunGit(t, state, "remote", "add", "origin", missingRemote)
+	if err := os.WriteFile(filepath.Join(state, "notes.md"), []byte("private\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out.Reset()
+	errOut.Reset()
+	if code := Run([]string{"sync", "--root", state, "-m", "Update private notes"}, &out, &errOut); code == 0 {
+		t.Fatalf("sync succeeded with missing remote, stdout = %s", out.String())
+	}
+	stderr := errOut.String()
+	if !strings.Contains(stderr, "pull --rebase failed while syncing Backlot root") {
+		t.Fatalf("sync stderr missing operation context:\n%s", stderr)
+	}
+	if !strings.Contains(stderr, "git -c core.fsmonitor=false -C") {
+		t.Fatalf("sync stderr did not preserve underlying git error:\n%s", stderr)
+	}
+}
+
 func TestStatusDetectsWrongSymlink(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("symlink behavior differs on Windows")
