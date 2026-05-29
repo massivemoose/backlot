@@ -25,6 +25,28 @@ func TestHelpExitsSuccessfully(t *testing.T) {
 	}
 }
 
+func TestVersionOutput(t *testing.T) {
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"version"}, &out, &errOut); code != 0 {
+		t.Fatalf("version exit code = %d, stderr = %s", code, errOut.String())
+	}
+	want := "backlot dev\ncommit: unknown\ndate: unknown\n"
+	if out.String() != want {
+		t.Fatalf("version output = %q, want %q", out.String(), want)
+	}
+
+	out.Reset()
+	errOut.Reset()
+	build := BuildInfo{Version: "v0.1.0", Commit: "testsha", Date: "2026-05-28T00:00:00Z"}
+	if code := RunWithBuildInfo([]string{"version"}, &out, &errOut, build); code != 0 {
+		t.Fatalf("version with build info exit code = %d, stderr = %s", code, errOut.String())
+	}
+	want = "backlot v0.1.0\ncommit: testsha\ndate: 2026-05-28T00:00:00Z\n"
+	if out.String() != want {
+		t.Fatalf("version with build info output = %q, want %q", out.String(), want)
+	}
+}
+
 func TestInitCreatesGitRepoAndPreservesExistingOrigin(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not installed")

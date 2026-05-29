@@ -1,0 +1,65 @@
+version: 2
+
+project_name: backlot
+
+builds:
+  - id: backlot
+    main: .
+    binary: backlot
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{ .Version }} -X main.commit={{ .Commit }} -X main.date={{ .Date }}
+
+archives:
+  - id: backlot
+    ids:
+      - backlot
+    formats:
+      - tar.gz
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    files:
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+
+release:
+  github:
+    owner: massivemoose
+    name: backlot
+
+homebrew_casks:
+  - name: backlot
+    ids:
+      - backlot
+    binaries:
+      - backlot
+    directory: Casks
+    homepage: https://github.com/massivemoose/backlot
+    description: Private workspace for public repos.
+    skip_upload: '{{ if eq .Env.TAP_GITHUB_TOKEN "" }}true{{ else }}false{{ end }}'
+    repository:
+      owner: massivemoose
+      name: homebrew-tap
+      branch: main
+      token: "{{ .Env.TAP_GITHUB_TOKEN }}"

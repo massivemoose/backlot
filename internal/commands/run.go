@@ -10,7 +10,23 @@ import (
 
 type commandFunc func([]string, io.Writer, io.Writer) error
 
+type BuildInfo struct {
+	Version string
+	Commit  string
+	Date    string
+}
+
+var defaultBuildInfo = BuildInfo{
+	Version: "dev",
+	Commit:  "unknown",
+	Date:    "unknown",
+}
+
 func Run(args []string, stdout, stderr io.Writer) int {
+	return RunWithBuildInfo(args, stdout, stderr, defaultBuildInfo)
+}
+
+func RunWithBuildInfo(args []string, stdout, stderr io.Writer, build BuildInfo) int {
 	if len(args) == 0 {
 		printUsage(stderr)
 		return 2
@@ -27,6 +43,9 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		"sync":    runSync,
 		"protect": runProtect,
 		"doctor":  runDoctor,
+		"version": func(args []string, stdout, stderr io.Writer) error {
+			return runVersion(args, stdout, stderr, build)
+		},
 	}
 	cmd, ok := commands[args[0]]
 	if !ok {
@@ -54,6 +73,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  sync     [--root PATH] [-m MESSAGE]")
 	fmt.Fprintln(w, "  protect")
 	fmt.Fprintln(w, "  doctor   [--root PATH]")
+	fmt.Fprintln(w, "  version")
 }
 
 func cwd() (string, error) {
