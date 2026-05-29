@@ -124,6 +124,12 @@ func TestAttachCreatesStateSymlinkAndExclude(t *testing.T) {
 	if strings.Count(string(excludeData), ".backlot/") != 1 {
 		t.Fatalf("exclude contents = %q, want one .backlot/ entry", string(excludeData))
 	}
+	if countExcludeLine(string(excludeData), ".backlot") != 1 {
+		t.Fatalf("exclude contents = %q, want one .backlot entry", string(excludeData))
+	}
+	if got := runGitOutput(t, public, "status", "--short"); got != "" {
+		t.Fatalf("public repo status = %q, want attached .backlot symlink ignored", got)
+	}
 
 	withChdir(t, public, func() {
 		var out, errOut bytes.Buffer
@@ -501,7 +507,7 @@ func TestDoctorReportsHealthyAttachedRepo(t *testing.T) {
 			"✓ Backlot root is a Git repo",
 			"✓ .backlot symlink exists",
 			"✓ .backlot points to expected target",
-			"✓ .git/info/exclude contains .backlot/",
+			"✓ .git/info/exclude ignores .backlot",
 		} {
 			if !strings.Contains(text, want) {
 				t.Fatalf("doctor output missing %q:\n%s", want, text)
@@ -578,4 +584,14 @@ func runGitOutput(t *testing.T, dir string, args ...string) string {
 		t.Fatalf("git -C %s %s failed: %v\n%s", dir, strings.Join(args, " "), err, string(output))
 	}
 	return strings.TrimSpace(string(output))
+}
+
+func countExcludeLine(text, want string) int {
+	count := 0
+	for _, line := range strings.Split(text, "\n") {
+		if strings.TrimSpace(line) == want {
+			count++
+		}
+	}
+	return count
 }

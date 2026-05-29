@@ -89,14 +89,14 @@ func runDoctor(args []string, stdout, stderr io.Writer) error {
 			fail(stdout, ".backlot points to expected target")
 		}
 		if ok, err := paths.ExcludeContains(repoRoot, ".backlot"); err == nil && ok {
-			pass(stdout, ".git/info/exclude contains .backlot/")
+			pass(stdout, ".git/info/exclude ignores .backlot")
 		} else {
-			fail(stdout, ".git/info/exclude contains .backlot/")
+			fail(stdout, ".git/info/exclude ignores .backlot")
 		}
 	} else {
 		fail(stdout, ".backlot symlink exists")
 		fail(stdout, ".backlot points to expected target")
-		fail(stdout, ".git/info/exclude contains .backlot/")
+		fail(stdout, ".git/info/exclude ignores .backlot")
 	}
 	return nil
 }

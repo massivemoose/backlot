@@ -76,6 +76,9 @@ func TestEnsureExcludeIsIdempotentAndPreservesContent(t *testing.T) {
 	if count := strings.Count(text, ".backlot/"); count != 1 {
 		t.Fatalf("exclude contains .backlot/ %d times, want 1: %q", count, text)
 	}
+	if count := countExcludeLine(text, ".backlot"); count != 1 {
+		t.Fatalf("exclude contains .backlot %d times, want 1: %q", count, text)
+	}
 
 	ok, err := ExcludeContains(repo, ".backlot")
 	if err != nil {
@@ -84,6 +87,16 @@ func TestEnsureExcludeIsIdempotentAndPreservesContent(t *testing.T) {
 	if !ok {
 		t.Fatal("ExcludeContains returned false after EnsureExclude")
 	}
+}
+
+func countExcludeLine(text, want string) int {
+	count := 0
+	for _, line := range strings.Split(text, "\n") {
+		if strings.TrimSpace(line) == want {
+			count++
+		}
+	}
+	return count
 }
 
 func mustRunGit(t *testing.T, dir string, args ...string) {
