@@ -97,8 +97,8 @@ go install .
 ## Releases
 
 Backlot uses semantic version tags like `v0.1.0`. A tagged release builds
-macOS and Linux binaries with GoReleaser and publishes archives, checksums, and
-release notes to GitHub Releases.
+macOS and Linux binaries with GoReleaser and publishes archives, checksums,
+release notes, and a Homebrew formula.
 
 For v0 releases:
 
