@@ -54,8 +54,8 @@ func runInit(args []string, stdout, stderr io.Writer) error {
 	}
 
 	if *remoteFlag != "" {
-		if gitutil.HasOrigin(root) {
-			fmt.Fprintln(stdout, "origin already exists; leaving it unchanged.")
+		if origin, err := gitutil.OriginURL(root); err == nil {
+			fmt.Fprintf(stdout, "origin already exists (%s); leaving it unchanged.\n", origin)
 		} else if _, err := gitutil.RunGit(root, "remote", "add", "origin", *remoteFlag); err != nil {
 			return err
 		} else {
