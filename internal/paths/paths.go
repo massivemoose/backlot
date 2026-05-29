@@ -57,22 +57,28 @@ func EnsureExclude(repoRoot string, linkName string) error {
 		return err
 	}
 
-	entry := linkName + "/"
 	data, err := os.ReadFile(excludePath)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	if excludeHasEntry(string(data), entry) {
+	text := string(data)
+	entries := []string{linkName, linkName + "/"}
+	if excludeHasEntry(text, entries[0]) && excludeHasEntry(text, entries[1]) {
 		return nil
 	}
 
 	var builder strings.Builder
 	builder.Write(data)
-	if len(data) > 0 && !strings.HasSuffix(string(data), "\n") {
+	if len(data) > 0 && !strings.HasSuffix(text, "\n") {
 		builder.WriteByte('\n')
 	}
-	builder.WriteString(entry)
-	builder.WriteByte('\n')
+	for _, entry := range entries {
+		if excludeHasEntry(text, entry) {
+			continue
+		}
+		builder.WriteString(entry)
+		builder.WriteByte('\n')
+	}
 	return os.WriteFile(excludePath, []byte(builder.String()), 0o644)
 }
 
@@ -91,7 +97,7 @@ func ExcludeContains(repoRoot string, linkName string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return excludeHasEntry(string(data), linkName+"/"), nil
+	return excludeHasEntry(string(data), linkName), nil
 }
 
 func EnsureManagedSymlink(linkPath, target string) error {

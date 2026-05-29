@@ -20,8 +20,8 @@ nested private repo per project becomes annoying and hard to maintain.
 
 Backlot creates a local `.backlot/` symlink inside each public repo. The symlink
 points into one central private state repo, defaulting to `~/.backlot`. Backlot
-adds `.backlot/` to `.git/info/exclude`, so the public repo ignores it locally
-without changing tracked files.
+adds local exclude entries for `.backlot` to `.git/info/exclude`, so the public
+repo ignores it locally without changing tracked files.
 
 ## Example
 
@@ -37,7 +37,7 @@ Backlot creates:
 ~/code/my-public-repo/.backlot -> ~/.backlot/github.com/you/my-public-repo
 ```
 
-and adds `.backlot/` to `.git/info/exclude`.
+and adds `.backlot` to `.git/info/exclude`.
 
 Your private files stay local to your machine and sync through your own private
 state repo.
