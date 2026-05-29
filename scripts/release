@@ -1,0 +1,102 @@
+#!/bin/sh
+set -eu
+
+usage() {
+	echo "Usage: scripts/release vMAJOR.MINOR.PATCH" >&2
+	exit 2
+}
+
+fail() {
+	echo "Error: $*" >&2
+	exit 1
+}
+
+is_digits() {
+	case "$1" in
+		""|*[!0123456789]*)
+			return 1
+			;;
+		*)
+			return 0
+			;;
+	esac
+}
+
+if [ "$#" -ne 1 ]; then
+	usage
+fi
+
+version=$1
+case "$version" in
+	v*.*.*)
+		;;
+	*)
+		usage
+		;;
+esac
+
+numbers=${version#v}
+major=${numbers%%.*}
+minor_patch=${numbers#*.}
+minor=${minor_patch%%.*}
+patch=${minor_patch#*.}
+
+case "$patch" in
+	*.*)
+		usage
+		;;
+esac
+is_digits "$major" || usage
+is_digits "$minor" || usage
+is_digits "$patch" || usage
+
+for cmd in git go goreleaser; do
+	if ! command -v "$cmd" >/dev/null 2>&1; then
+		fail "missing required command: $cmd"
+	fi
+done
+
+repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || fail "not inside a Git repository"
+cd "$repo_root"
+
+status=$(git -c core.fsmonitor=false status --porcelain)
+if [ -n "$status" ]; then
+	echo "$status" >&2
+	fail "working tree is not clean"
+fi
+
+git fetch --tags origin main
+
+head=$(git rev-parse HEAD)
+origin_main=$(git rev-parse origin/main)
+if [ "$head" != "$origin_main" ]; then
+	fail "current HEAD must match origin/main before releasing"
+fi
+
+if git rev-parse -q --verify "refs/tags/$version" >/dev/null; then
+	fail "tag $version already exists locally"
+fi
+
+set +e
+git ls-remote --exit-code --tags origin "refs/tags/$version" >/dev/null 2>&1
+remote_tag_status=$?
+set -e
+case "$remote_tag_status" in
+	0)
+		fail "tag $version already exists on origin"
+		;;
+	2)
+		;;
+	*)
+		fail "could not check remote tag $version"
+		;;
+esac
+
+go test ./...
+TAP_GITHUB_TOKEN=${TAP_GITHUB_TOKEN:-} goreleaser release --snapshot --clean
+
+git tag -a "$version" -m "Backlot $version"
+git push origin "refs/tags/$version"
+
+echo "Pushed release tag $version."
+echo "GitHub Actions: https://github.com/massivemoose/backlot/actions/workflows/release.yml"
