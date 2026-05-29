@@ -51,6 +51,7 @@ backlot status [--root PATH]
 backlot sync [--root PATH] [-m MESSAGE]
 backlot protect
 backlot doctor [--root PATH]
+backlot version
 ```
 
 Backlot root resolution order:
@@ -69,6 +70,18 @@ Backlot root resolution order:
 
 ## Install
 
+Homebrew:
+
+```sh
+brew install massivemoose/tap/backlot
+```
+
+Manual download:
+
+1. Download the archive for your OS and architecture from the GitHub Releases page.
+2. Verify it against `checksums.txt`.
+3. Place the `backlot` binary somewhere on your `PATH`.
+
 Build from source:
 
 ```sh
@@ -80,6 +93,22 @@ Install into your Go binary path:
 ```sh
 go install .
 ```
+
+## Releases
+
+Backlot uses semantic version tags like `v0.1.0`. A tagged release builds
+macOS and Linux binaries with GoReleaser and publishes archives, checksums, and
+release notes to GitHub Releases.
+
+For v0 releases:
+
+- Patch versions are for bug fixes, docs, release pipeline fixes, and small polish.
+- Minor versions are for new user-facing commands or workflows.
+- `v1.0.0` waits until the core workflows are stable: init, attach, sync,
+  clone/new-machine, and release/install docs.
+
+The Homebrew tap is expected at `massivemoose/homebrew-tap`. Publishing to the
+tap requires a `TAP_GITHUB_TOKEN` secret with write access to that repository.
 
 ## Limitations
 
