@@ -26,7 +26,7 @@ repo ignores it locally without changing tracked files.
 ## Example
 
 ```sh
-backlot init --remote git@github.com:you/backlot-state.git
+backlot init --remote git@github.com:you/backlot-archive.git
 cd ~/code/my-public-repo
 backlot attach
 ```
@@ -41,6 +41,15 @@ and adds `.backlot` to `.git/info/exclude`.
 
 Your private files stay local to your machine and sync through your own private
 state repo.
+
+For normal setup, you should not need to enter `~/.backlot` directly. Create a
+private `backlot-archive` repo, initialize Backlot with its remote URL, and run
+`backlot sync` when you want to publish private state:
+
+```sh
+backlot init --remote git@github.com:you/backlot-archive.git
+backlot sync -m "Initial Backlot archive"
+```
 
 ## Commands
 

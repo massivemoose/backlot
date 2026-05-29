@@ -72,10 +72,35 @@ func TestInitCreatesGitRepoAndPreservesExistingOrigin(t *testing.T) {
 	if !strings.Contains(out.String(), "origin already exists") {
 		t.Fatalf("second init output = %q, want origin already exists message", out.String())
 	}
+	if !strings.Contains(out.String(), "git@example.com:one/state.git") {
+		t.Fatalf("second init output = %q, want existing origin URL", out.String())
+	}
 
 	got := runGitOutput(t, root, "remote", "get-url", "origin")
 	if got != "git@example.com:one/state.git" {
 		t.Fatalf("origin = %q, want original remote", got)
+	}
+}
+
+func TestInitRemoteSetsOriginOnExistingRoot(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+
+	root := filepath.Join(t.TempDir(), "state")
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"init", "--root", root}, &out, &errOut); code != 0 {
+		t.Fatalf("init exit code = %d, stderr = %s", code, errOut.String())
+	}
+
+	out.Reset()
+	errOut.Reset()
+	remote := "git@example.com:you/backlot-archive.git"
+	if code := Run([]string{"init", "--root", root, "--remote", remote}, &out, &errOut); code != 0 {
+		t.Fatalf("init remote exit code = %d, stderr = %s", code, errOut.String())
+	}
+	if got := runGitOutput(t, root, "remote", "get-url", "origin"); got != remote {
+		t.Fatalf("origin = %q, want %q", got, remote)
 	}
 }
 
@@ -370,6 +395,110 @@ func TestSyncDirtyNoRemoteCommitsLocallyOnlyInBacklotRoot(t *testing.T) {
 	}
 }
 
+func TestSyncDirtyWithOriginSetsUpstreamOnFirstPush(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+
+	tmp := t.TempDir()
+	state := filepath.Join(tmp, "state")
+	remote := filepath.Join(tmp, "remote.git")
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"init", "--root", state}, &out, &errOut); code != 0 {
+		t.Fatalf("init exit code = %d, stderr = %s", code, errOut.String())
+	}
+	configureGitIdentity(t, state)
+	mustRunGit(t, tmp, "init", "--bare", remote)
+	mustRunGit(t, state, "remote", "add", "origin", remote)
+	if err := os.WriteFile(filepath.Join(state, "notes.md"), []byte("private\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out.Reset()
+	errOut.Reset()
+	if code := Run([]string{"sync", "--root", state, "-m", "Initial Backlot archive"}, &out, &errOut); code != 0 {
+		t.Fatalf("sync exit code = %d, stderr = %s", code, errOut.String())
+	}
+	if !strings.Contains(out.String(), "Backlot state synced.") {
+		t.Fatalf("sync output = %q, want synced message", out.String())
+	}
+	branch := runGitOutput(t, state, "branch", "--show-current")
+	if got := runGitOutput(t, state, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"); got != "origin/"+branch {
+		t.Fatalf("upstream = %q, want origin/%s", got, branch)
+	}
+	if got := runGitOutput(t, state, "status", "--short"); got != "" {
+		t.Fatalf("state repo status = %q, want clean", got)
+	}
+}
+
+func TestSyncCleanWithOriginSetsUpstreamOnFirstPush(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+
+	tmp := t.TempDir()
+	state := filepath.Join(tmp, "state")
+	remote := filepath.Join(tmp, "remote.git")
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"init", "--root", state}, &out, &errOut); code != 0 {
+		t.Fatalf("init exit code = %d, stderr = %s", code, errOut.String())
+	}
+	configureGitIdentity(t, state)
+	mustRunGit(t, tmp, "init", "--bare", remote)
+	mustRunGit(t, state, "remote", "add", "origin", remote)
+	mustRunGit(t, state, "add", "README.md")
+	mustRunGit(t, state, "commit", "-m", "Initial Backlot archive")
+
+	out.Reset()
+	errOut.Reset()
+	if code := Run([]string{"sync", "--root", state}, &out, &errOut); code != 0 {
+		t.Fatalf("sync exit code = %d, stderr = %s", code, errOut.String())
+	}
+	if !strings.Contains(out.String(), "Backlot state synced.") {
+		t.Fatalf("sync output = %q, want synced message", out.String())
+	}
+	branch := runGitOutput(t, state, "branch", "--show-current")
+	if got := runGitOutput(t, state, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"); got != "origin/"+branch {
+		t.Fatalf("upstream = %q, want origin/%s", got, branch)
+	}
+}
+
+func TestSyncDirtyWithExistingUpstreamPullsAndPushes(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+
+	tmp := t.TempDir()
+	state := filepath.Join(tmp, "state")
+	remote := filepath.Join(tmp, "remote.git")
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"init", "--root", state}, &out, &errOut); code != 0 {
+		t.Fatalf("init exit code = %d, stderr = %s", code, errOut.String())
+	}
+	configureGitIdentity(t, state)
+	mustRunGit(t, tmp, "init", "--bare", remote)
+	mustRunGit(t, state, "remote", "add", "origin", remote)
+	mustRunGit(t, state, "add", "README.md")
+	mustRunGit(t, state, "commit", "-m", "Initial Backlot archive")
+	branch := runGitOutput(t, state, "branch", "--show-current")
+	mustRunGit(t, state, "push", "-u", "origin", branch)
+	if err := os.WriteFile(filepath.Join(state, "notes.md"), []byte("private\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out.Reset()
+	errOut.Reset()
+	if code := Run([]string{"sync", "--root", state, "-m", "Update private notes"}, &out, &errOut); code != 0 {
+		t.Fatalf("sync exit code = %d, stderr = %s", code, errOut.String())
+	}
+	if !strings.Contains(out.String(), "Backlot state synced.") {
+		t.Fatalf("sync output = %q, want synced message", out.String())
+	}
+	if got := runGitOutput(t, remote, "log", "-1", "--pretty=%s"); got != "Update private notes" {
+		t.Fatalf("remote last commit = %q, want sync commit", got)
+	}
+}
+
 func TestSyncRemoteFailureIncludesOperationContext(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not installed")
@@ -394,7 +523,7 @@ func TestSyncRemoteFailureIncludesOperationContext(t *testing.T) {
 		t.Fatalf("sync succeeded with missing remote, stdout = %s", out.String())
 	}
 	stderr := errOut.String()
-	if !strings.Contains(stderr, "pull --rebase failed while syncing Backlot root") {
+	if !strings.Contains(stderr, "first push failed while syncing Backlot root") {
 		t.Fatalf("sync stderr missing operation context:\n%s", stderr)
 	}
 	if !strings.Contains(stderr, "git -c core.fsmonitor=false -C") {

@@ -34,7 +34,14 @@ func runSync(args []string, stdout, stderr io.Writer) error {
 		return syncGitError("status check", root, err)
 	}
 	if strings.TrimSpace(status) == "" {
-		fmt.Fprintln(stdout, "Backlot state is clean.")
+		if !gitutil.HasOrigin(root) || hasUpstream(root) {
+			fmt.Fprintln(stdout, "Backlot state is clean.")
+			return nil
+		}
+		if err := pushFirstUpstream(root); err != nil {
+			return err
+		}
+		fmt.Fprintln(stdout, "Backlot state synced.")
 		return nil
 	}
 
@@ -52,6 +59,13 @@ func runSync(args []string, stdout, stderr io.Writer) error {
 		fmt.Fprintln(stdout, "No origin remote configured; committed locally and skipped push.")
 		return nil
 	}
+	if !hasUpstream(root) {
+		if err := pushFirstUpstream(root); err != nil {
+			return err
+		}
+		fmt.Fprintln(stdout, "Backlot state synced.")
+		return nil
+	}
 	if _, err := gitutil.RunGit(root, "pull", "--rebase"); err != nil {
 		return syncGitError("pull --rebase", root, err)
 	}
@@ -60,6 +74,42 @@ func runSync(args []string, stdout, stderr io.Writer) error {
 	}
 	fmt.Fprintln(stdout, "Backlot state synced.")
 	return nil
+}
+
+func hasUpstream(root string) bool {
+	_, err := gitutil.RunGit(root, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
+	return err == nil
+}
+
+func pushFirstUpstream(root string) error {
+	if !hasCommit(root) {
+		return fmt.Errorf("Backlot root %s has no commits to push; add private state and run backlot sync again", root)
+	}
+	branch, err := currentBranch(root)
+	if err != nil {
+		return err
+	}
+	if _, err := gitutil.RunGit(root, "push", "-u", "origin", branch); err != nil {
+		return syncGitError("first push", root, err)
+	}
+	return nil
+}
+
+func hasCommit(root string) bool {
+	_, err := gitutil.RunGit(root, "rev-parse", "--verify", "HEAD")
+	return err == nil
+}
+
+func currentBranch(root string) (string, error) {
+	branch, err := gitutil.RunGit(root, "branch", "--show-current")
+	if err != nil {
+		return "", syncGitError("current branch check", root, err)
+	}
+	branch = strings.TrimSpace(branch)
+	if branch == "" {
+		return "", fmt.Errorf("Backlot root %s is not on a branch; cannot set upstream for first push", root)
+	}
+	return branch, nil
 }
 
 func syncGitError(operation string, root string, err error) error {
