@@ -109,6 +109,17 @@ Backlot uses semantic version tags like `v0.1.0`. A tagged release builds
 macOS and Linux binaries with GoReleaser and publishes archives, checksums,
 release notes, and a Homebrew formula.
 
+Maintainers can publish a release from the commit currently at `origin/main`
+with:
+
+```sh
+scripts/release v0.1.2
+```
+
+The release helper verifies the working tree, runs tests, runs a local
+GoReleaser snapshot, creates an annotated tag, and pushes the tag to trigger the
+GitHub Actions release workflow.
+
 For v0 releases:
 
 - Patch versions are for bug fixes, docs, release pipeline fixes, and small polish.
