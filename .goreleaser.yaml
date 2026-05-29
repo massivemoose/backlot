@@ -48,13 +48,11 @@ release:
     owner: massivemoose
     name: backlot
 
-homebrew_casks:
+brews:
   - name: backlot
     ids:
       - backlot
-    binaries:
-      - backlot
-    directory: Casks
+    directory: Formula
     homepage: https://github.com/massivemoose/backlot
     description: Private workspace for public repos.
     skip_upload: '{{ if eq .Env.TAP_GITHUB_TOKEN "" }}true{{ else }}false{{ end }}'
