@@ -8,6 +8,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/massivemoose/backlot/internal/gitutil"
 )
 
 func TestHelpExitsSuccessfully(t *testing.T) {
@@ -101,6 +103,203 @@ func TestInitRemoteSetsOriginOnExistingRoot(t *testing.T) {
 	}
 	if got := runGitOutput(t, root, "remote", "get-url", "origin"); got != remote {
 		t.Fatalf("origin = %q, want %q", got, remote)
+	}
+}
+
+func TestCloneCreatesBacklotRootFromRemote(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+
+	tmp := t.TempDir()
+	remote := createBacklotArchive(t, tmp)
+	root := filepath.Join(tmp, "state")
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"clone", remote, "--root", root}, &out, &errOut); code != 0 {
+		t.Fatalf("clone exit code = %d, stderr = %s", code, errOut.String())
+	}
+	if _, err := os.Stat(filepath.Join(root, ".git")); err != nil {
+		t.Fatalf("cloned root is not a Git repo: %v", err)
+	}
+	if got := runGitOutput(t, root, "remote", "get-url", "origin"); got != remote {
+		t.Fatalf("origin = %q, want %q", got, remote)
+	}
+	if _, err := os.Stat(filepath.Join(root, "README.md")); err != nil {
+		t.Fatalf("cloned archive missing README.md: %v", err)
+	}
+	if !strings.Contains(out.String(), "Cloned Backlot archive") {
+		t.Fatalf("clone output = %q, want success message", out.String())
+	}
+}
+
+func TestCloneAllowsExistingEmptyRoot(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+
+	tmp := t.TempDir()
+	remote := createBacklotArchive(t, tmp)
+	root := filepath.Join(tmp, "empty")
+	if err := os.Mkdir(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"clone", remote, "--root", root}, &out, &errOut); code != 0 {
+		t.Fatalf("clone exit code = %d, stderr = %s", code, errOut.String())
+	}
+	if got := runGitOutput(t, root, "remote", "get-url", "origin"); got != remote {
+		t.Fatalf("origin = %q, want %q", got, remote)
+	}
+}
+
+func TestCloneRejectsExistingNonEmptyRoot(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+
+	tmp := t.TempDir()
+	remote := createBacklotArchive(t, tmp)
+	root := filepath.Join(tmp, "state")
+	if err := os.Mkdir(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sentinel := filepath.Join(root, "local.txt")
+	if err := os.WriteFile(sentinel, []byte("local\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"clone", remote, "--root", root}, &out, &errOut); code == 0 {
+		t.Fatalf("clone succeeded with non-empty root, stdout = %s", out.String())
+	}
+	if !strings.Contains(errOut.String(), "already exists and is not empty") {
+		t.Fatalf("clone stderr = %q, want non-empty root error", errOut.String())
+	}
+	data, err := os.ReadFile(sentinel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "local\n" {
+		t.Fatalf("sentinel changed to %q", string(data))
+	}
+}
+
+func TestCloneRejectsInitCreatedRoot(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+
+	tmp := t.TempDir()
+	remote := createBacklotArchive(t, tmp)
+	root := filepath.Join(tmp, "state")
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"init", "--root", root}, &out, &errOut); code != 0 {
+		t.Fatalf("init exit code = %d, stderr = %s", code, errOut.String())
+	}
+	out.Reset()
+	errOut.Reset()
+	if code := Run([]string{"clone", remote, "--root", root}, &out, &errOut); code == 0 {
+		t.Fatalf("clone succeeded over init-created root, stdout = %s", out.String())
+	}
+	if !strings.Contains(errOut.String(), "Move it aside or choose another root with --root") {
+		t.Fatalf("clone stderr = %q, want move-aside guidance", errOut.String())
+	}
+}
+
+func TestCloneHybridArgs(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+
+	tmp := t.TempDir()
+	remote := createBacklotArchive(t, tmp)
+
+	tests := []struct {
+		name    string
+		args    []string
+		wantErr string
+	}{
+		{
+			name:    "missing url",
+			args:    []string{"clone"},
+			wantErr: "error: missing archive URL",
+		},
+		{
+			name:    "too many args",
+			args:    []string{"clone", "one", "two"},
+			wantErr: "error: too many arguments",
+		},
+		{
+			name:    "remote flag is unsupported",
+			args:    []string{"clone", "--remote", "flag"},
+			wantErr: "flag provided but not defined: -remote",
+		},
+		{
+			name: "positional then root success",
+			args: []string{"clone", remote, "--root", filepath.Join(tmp, "pos")},
+		},
+		{
+			name: "root then positional success",
+			args: []string{"clone", "--root", filepath.Join(tmp, "root-first"), remote},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var out, errOut bytes.Buffer
+			code := Run(tt.args, &out, &errOut)
+			if tt.wantErr != "" {
+				if code == 0 {
+					t.Errorf("expected error code, got 0")
+				}
+				if !strings.Contains(errOut.String(), tt.wantErr) {
+					t.Errorf("expected error %q, got %q", tt.wantErr, errOut.String())
+				}
+			} else {
+				if code != 0 {
+					t.Errorf("expected code 0, got %d, stderr: %s", code, errOut.String())
+				}
+			}
+		})
+	}
+}
+
+func TestCloneThenAttachPublicRepo(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink behavior differs on Windows")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+
+	tmp := t.TempDir()
+	remote := createBacklotArchive(t, tmp)
+	root := filepath.Join(tmp, "state")
+	public := filepath.Join(tmp, "public")
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"clone", remote, "--root", root}, &out, &errOut); code != 0 {
+		t.Fatalf("clone exit code = %d, stderr = %s", code, errOut.String())
+	}
+	mustRunGit(t, tmp, "init", public)
+	mustRunGit(t, public, "remote", "add", "origin", "git@github.com:massivemoose/ovek.git")
+
+	withChdir(t, public, func() {
+		out.Reset()
+		errOut.Reset()
+		if code := Run([]string{"attach", "--root", root}, &out, &errOut); code != 0 {
+			t.Fatalf("attach exit code = %d, stderr = %s", code, errOut.String())
+		}
+	})
+
+	stateDir := filepath.Join(root, "github.com", "massivemoose", "ovek")
+	linkTarget, err := os.Readlink(filepath.Join(public, ".backlot"))
+	if err != nil {
+		t.Fatalf(".backlot is not a symlink: %v", err)
+	}
+	if linkTarget != stateDir {
+		t.Fatalf(".backlot target = %q, want %q", linkTarget, stateDir)
+	}
+	if got := runGitOutput(t, public, "status", "--short"); got != "" {
+		t.Fatalf("public repo status = %q, want clean", got)
 	}
 }
 
@@ -692,10 +891,8 @@ func withChdir(t *testing.T, dir string, fn func()) {
 
 func mustRunGit(t *testing.T, dir string, args ...string) {
 	t.Helper()
-	cmd := exec.Command("git", append([]string{"-c", "core.fsmonitor=false", "-C", dir}, args...)...)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("git -C %s %s failed: %v\n%s", dir, strings.Join(args, " "), err, string(output))
+	if _, err := gitutil.RunGit(dir, args...); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -707,12 +904,11 @@ func configureGitIdentity(t *testing.T, dir string) {
 
 func runGitOutput(t *testing.T, dir string, args ...string) string {
 	t.Helper()
-	cmd := exec.Command("git", append([]string{"-c", "core.fsmonitor=false", "-C", dir}, args...)...)
-	output, err := cmd.CombinedOutput()
+	out, err := gitutil.RunGit(dir, args...)
 	if err != nil {
-		t.Fatalf("git -C %s %s failed: %v\n%s", dir, strings.Join(args, " "), err, string(output))
+		t.Fatal(err)
 	}
-	return strings.TrimSpace(string(output))
+	return out
 }
 
 func countExcludeLine(text, want string) int {
@@ -723,4 +919,22 @@ func countExcludeLine(text, want string) int {
 		}
 	}
 	return count
+}
+
+func createBacklotArchive(t *testing.T, tmp string) string {
+	t.Helper()
+	remote := filepath.Join(tmp, "archive.git")
+	seed := filepath.Join(tmp, "seed")
+	mustRunGit(t, tmp, "init", "--bare", remote)
+	mustRunGit(t, tmp, "init", "-b", "main", seed)
+	configureGitIdentity(t, seed)
+	if err := os.WriteFile(filepath.Join(seed, "README.md"), []byte("# Backlot archive\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustRunGit(t, seed, "add", "README.md")
+	mustRunGit(t, seed, "commit", "-m", "Initial archive")
+	mustRunGit(t, seed, "remote", "add", "origin", remote)
+	mustRunGit(t, seed, "push", "origin", "main")
+	mustRunGit(t, remote, "symbolic-ref", "HEAD", "refs/heads/main")
+	return remote
 }

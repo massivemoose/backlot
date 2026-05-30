@@ -51,10 +51,22 @@ backlot init --remote git@github.com:you/backlot-archive.git
 backlot sync -m "Initial Backlot archive"
 ```
 
+If you have an existing `backlot-archive` repo, you can easily `clone` it to
+another machine and then `attach` it to whatever repos you're working on. If you
+already have things in your `backlot-archive` for a repo then cloning will let
+you pick up where you left off:
+
+```sh
+backlot clone git@github.com:you/backlot-archive.git
+cd ~/code/my-public-repo
+backlot attach
+```
+
 ## Commands
 
 ```sh
 backlot init [--root PATH] [--remote URL]
+backlot clone <archive-url> [--root PATH]
 backlot attach [--root PATH] [--link-name .backlot]
 backlot status [--root PATH]
 backlot sync [--root PATH] [-m MESSAGE]

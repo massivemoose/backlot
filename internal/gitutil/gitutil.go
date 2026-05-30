@@ -10,7 +10,11 @@ import (
 )
 
 func RunGit(dir string, args ...string) (string, error) {
-	allArgs := append([]string{"-c", "core.fsmonitor=false", "-C", dir}, args...)
+	allArgs := []string{"-c", "core.fsmonitor=false"}
+	if dir != "" {
+		allArgs = append(allArgs, "-C", dir)
+	}
+	allArgs = append(allArgs, args...)
 	cmd := exec.Command("git", allArgs...)
 	output, err := cmd.CombinedOutput()
 	text := strings.TrimSpace(string(output))
