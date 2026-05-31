@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
 	"github.com/massivemoose/backlot/internal/gitutil"
@@ -13,6 +14,14 @@ import (
 
 func runSync(args []string, stdout, stderr io.Writer) error {
 	fs := newFlagSet("sync", stderr)
+	fs.Usage = func() {
+		fmt.Fprintln(stderr, "Usage:")
+		fmt.Fprintln(stderr, "  backlot sync [--root PATH] [-m MESSAGE]")
+		fmt.Fprintln(stderr)
+		fmt.Fprintln(stderr, "Examples:")
+		fmt.Fprintln(stderr, "  backlot sync")
+		fmt.Fprintln(stderr, "  backlot sync -m \"Update private notes\"")
+	}
 	rootFlag := fs.String("root", "", "Backlot root path")
 	message := fs.String("m", "Update backlot state", "commit message")
 	if err := fs.Parse(args); err != nil {
@@ -26,20 +35,45 @@ func runSync(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if !gitutil.IsGitRepoRoot(root) {
-		return fmt.Errorf("Backlot root %s is not initialized; run backlot init first", root)
+	if err := ensureRootOutsideCurrentProject(root); err != nil {
+		return err
+	}
+	if err := requireBacklotArchiveRoot(root); err != nil {
+		return err
+	}
+	if err := ensureNoGitOperationInProgress(root); err != nil {
+		return err
 	}
 	status, err := gitutil.RunGit(root, "status", "--short")
 	if err != nil {
 		return syncGitError("status check", root, err)
 	}
-	if strings.TrimSpace(status) == "" {
-		if !gitutil.HasOrigin(root) || hasUpstream(root) {
+	dirty := strings.TrimSpace(status) != ""
+	hasOrigin := gitutil.HasOrigin(root)
+	upstream := hasUpstream(root)
+	if hasOrigin {
+		if _, err := gitutil.RunGit(root, "fetch", "origin"); err != nil {
+			return syncGitError("fetch", root, err)
+		}
+	}
+
+	if !dirty {
+		if !hasOrigin {
 			fmt.Fprintln(stdout, "Backlot state is clean.")
 			return nil
 		}
-		if err := pushFirstUpstream(root); err != nil {
-			return err
+		if !upstream {
+			if err := pushFirstUpstream(root); err != nil {
+				return err
+			}
+			fmt.Fprintln(stdout, "Backlot state synced.")
+			return nil
+		}
+		if _, err := gitutil.RunGit(root, "pull", "--rebase"); err != nil {
+			return syncRebaseError(root, err)
+		}
+		if _, err := gitutil.RunGit(root, "push"); err != nil {
+			return syncGitError("push", root, err)
 		}
 		fmt.Fprintln(stdout, "Backlot state synced.")
 		return nil
@@ -52,14 +86,16 @@ func runSync(args []string, stdout, stderr io.Writer) error {
 		if !isNothingToCommit(err) {
 			return syncGitError("committing private state", root, err)
 		}
-		fmt.Fprintln(stdout, "Backlot state is clean.")
-		return nil
+		if !hasOrigin {
+			fmt.Fprintln(stdout, "Backlot state is clean.")
+			return nil
+		}
 	}
-	if !gitutil.HasOrigin(root) {
+	if !hasOrigin {
 		fmt.Fprintln(stdout, "No origin remote configured; committed locally and skipped push.")
 		return nil
 	}
-	if !hasUpstream(root) {
+	if !upstream {
 		if err := pushFirstUpstream(root); err != nil {
 			return err
 		}
@@ -67,7 +103,7 @@ func runSync(args []string, stdout, stderr io.Writer) error {
 		return nil
 	}
 	if _, err := gitutil.RunGit(root, "pull", "--rebase"); err != nil {
-		return syncGitError("pull --rebase", root, err)
+		return syncRebaseError(root, err)
 	}
 	if _, err := gitutil.RunGit(root, "push"); err != nil {
 		return syncGitError("push", root, err)
@@ -88,6 +124,12 @@ func pushFirstUpstream(root string) error {
 	branch, err := currentBranch(root)
 	if err != nil {
 		return err
+	}
+	remoteRef := "refs/remotes/origin/" + branch
+	if _, err := gitutil.RunGit(root, "rev-parse", "--verify", remoteRef); err == nil {
+		if _, err := gitutil.RunGit(root, "merge-base", "--is-ancestor", remoteRef, "HEAD"); err != nil {
+			return fmt.Errorf("origin already has a remote branch %s that is not an ancestor of local HEAD; use backlot clone for existing archives or choose an empty archive remote", branch)
+		}
 	}
 	if _, err := gitutil.RunGit(root, "push", "-u", "origin", branch); err != nil {
 		return syncGitError("first push", root, err)
@@ -114,6 +156,50 @@ func currentBranch(root string) (string, error) {
 
 func syncGitError(operation string, root string, err error) error {
 	return fmt.Errorf("%s failed while syncing Backlot root %s: %w", operation, root, err)
+}
+
+func syncRebaseError(root string, err error) error {
+	return fmt.Errorf("%w\n\n%s", syncGitError("pull --rebase", root, err), syncRecoveryInstructions(root))
+}
+
+func syncRecoveryInstructions(root string) string {
+	return fmt.Sprintf(`Backlot sync hit a Git conflict in the private archive.
+Resolve it manually:
+  git -C %s status
+  edit the conflicted files under %s
+  git -C %s add <PATH>
+  git -C %s rebase --continue
+Or abort the sync:
+  git -C %s rebase --abort`, root, root, root, root, root)
+}
+
+func ensureNoGitOperationInProgress(root string) error {
+	checks := []string{
+		"MERGE_HEAD",
+		"CHERRY_PICK_HEAD",
+		"REVERT_HEAD",
+		"rebase-apply",
+		"rebase-merge",
+	}
+	for _, name := range checks {
+		path, err := gitutil.GitPath(root, name)
+		if err != nil {
+			return syncGitError("git state check", root, err)
+		}
+		if _, err := os.Stat(path); err == nil {
+			return fmt.Errorf("Backlot root %s has an unfinished Git operation.\n\n%s", root, syncRecoveryInstructions(root))
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+	conflicts, err := gitutil.RunGit(root, "diff", "--name-only", "--diff-filter=U")
+	if err != nil {
+		return syncGitError("conflict check", root, err)
+	}
+	if strings.TrimSpace(conflicts) != "" {
+		return fmt.Errorf("Backlot root %s has unresolved conflicts.\n\n%s", root, syncRecoveryInstructions(root))
+	}
+	return nil
 }
 
 func isNothingToCommit(err error) bool {

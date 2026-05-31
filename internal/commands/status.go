@@ -14,6 +14,13 @@ import (
 
 func runStatus(args []string, stdout, stderr io.Writer) error {
 	fs := newFlagSet("status", stderr)
+	fs.Usage = func() {
+		fmt.Fprintln(stderr, "Usage:")
+		fmt.Fprintln(stderr, "  backlot status [--root PATH]")
+		fmt.Fprintln(stderr)
+		fmt.Fprintln(stderr, "Example:")
+		fmt.Fprintln(stderr, "  backlot status")
+	}
 	rootFlag := fs.String("root", "", "Backlot root path")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -70,6 +77,12 @@ func collectProjectInfo(rootFlag string) (projectInfo, error) {
 	}
 	info.RepoRoot, err = gitutil.RepoRoot(current)
 	if err != nil {
+		return info, err
+	}
+	if err := ensureRootOutsideProject(info.BacklotRoot, info.RepoRoot); err != nil {
+		return info, err
+	}
+	if err := requireBacklotArchiveRoot(info.BacklotRoot); err != nil {
 		return info, err
 	}
 	info.Origin, err = gitutil.OriginURL(info.RepoRoot)

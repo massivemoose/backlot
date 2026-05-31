@@ -12,6 +12,13 @@ import (
 
 func runDetach(args []string, stdout, stderr io.Writer) error {
 	fs := newFlagSet("detach", stderr)
+	fs.Usage = func() {
+		fmt.Fprintln(stderr, "Usage:")
+		fmt.Fprintln(stderr, "  backlot detach [--root PATH]")
+		fmt.Fprintln(stderr)
+		fmt.Fprintln(stderr, "Example:")
+		fmt.Fprintln(stderr, "  backlot detach")
+	}
 	rootFlag := fs.String("root", "", "Backlot root path")
 	if err := fs.Parse(args); err != nil {
 		return err

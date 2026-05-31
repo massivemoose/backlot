@@ -27,6 +27,39 @@ func TestHelpExitsSuccessfully(t *testing.T) {
 	}
 }
 
+func TestHelpDoesNotAdvertiseCustomLinkName(t *testing.T) {
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"--help"}, &out, &errOut); code != 0 {
+		t.Fatalf("help exit code = %d, stderr = %s", code, errOut.String())
+	}
+	if strings.Contains(out.String(), "--link-name") {
+		t.Fatalf("help output advertises custom link names:\n%s", out.String())
+	}
+}
+
+func TestAttachRejectsCustomLinkName(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+
+	tmp := t.TempDir()
+	state := filepath.Join(tmp, "state")
+	public := filepath.Join(tmp, "public")
+	mustRunBacklotInit(t, state)
+	mustRunGit(t, tmp, "init", public)
+	mustRunGit(t, public, "remote", "add", "origin", "git@github.com:massivemoose/ovek.git")
+
+	withChdir(t, public, func() {
+		var out, errOut bytes.Buffer
+		if code := Run([]string{"attach", "--root", state, "--link-name", ".private"}, &out, &errOut); code == 0 {
+			t.Fatalf("attach accepted custom link name, stdout = %s", out.String())
+		}
+		if !strings.Contains(errOut.String(), "custom link names are not supported") {
+			t.Fatalf("attach stderr = %q, want custom-link rejection", errOut.String())
+		}
+	})
+}
+
 func TestVersionOutput(t *testing.T) {
 	var out, errOut bytes.Buffer
 	if code := Run([]string{"version"}, &out, &errOut); code != 0 {
@@ -65,6 +98,9 @@ func TestInitCreatesGitRepoAndPreservesExistingOrigin(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(root, "README.md")); err != nil {
 		t.Fatalf("README.md missing: %v", err)
 	}
+	if _, err := os.Stat(filepath.Join(root, ".backlot-root")); err != nil {
+		t.Fatalf("archive marker missing: %v", err)
+	}
 
 	out.Reset()
 	errOut.Reset()
@@ -82,6 +118,41 @@ func TestInitCreatesGitRepoAndPreservesExistingOrigin(t *testing.T) {
 	if got != "git@example.com:one/state.git" {
 		t.Fatalf("origin = %q, want original remote", got)
 	}
+}
+
+func TestInitRejectsExistingNonBacklotGitRepo(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+
+	root := filepath.Join(t.TempDir(), "public")
+	mustRunGit(t, filepath.Dir(root), "init", root)
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"init", "--root", root}, &out, &errOut); code == 0 {
+		t.Fatalf("init accepted existing non-Backlot Git repo, stdout = %s", out.String())
+	}
+	if !strings.Contains(errOut.String(), "is not a Backlot archive") {
+		t.Fatalf("init stderr = %q, want non-Backlot archive error", errOut.String())
+	}
+}
+
+func TestInitRejectsRootInsideCurrentProjectRepo(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+
+	project := filepath.Join(t.TempDir(), "project")
+	mustRunGit(t, filepath.Dir(project), "init", project)
+	nestedRoot := filepath.Join(project, ".state")
+	withChdir(t, project, func() {
+		var out, errOut bytes.Buffer
+		if code := Run([]string{"init", "--root", nestedRoot}, &out, &errOut); code == 0 {
+			t.Fatalf("init accepted root inside project repo, stdout = %s", out.String())
+		}
+		if !strings.Contains(errOut.String(), "inside current Git repo") {
+			t.Fatalf("init stderr = %q, want inside-project error", errOut.String())
+		}
+	})
 }
 
 func TestInitRemoteSetsOriginOnExistingRoot(t *testing.T) {
@@ -311,7 +382,7 @@ func TestAttachCreatesStateSymlinkAndExclude(t *testing.T) {
 	tmp := t.TempDir()
 	state := filepath.Join(tmp, "state")
 	public := filepath.Join(tmp, "public")
-	mustRunGit(t, tmp, "init", state)
+	mustRunBacklotInit(t, state)
 	mustRunGit(t, tmp, "init", public)
 	mustRunGit(t, public, "remote", "add", "origin", "git@github.com:massivemoose/ovek.git")
 
@@ -385,7 +456,7 @@ func TestAttachCopiesCustomStarterTemplate(t *testing.T) {
 	state := filepath.Join(tmp, "state")
 	public := filepath.Join(tmp, "public")
 	starter := filepath.Join(state, ".starter")
-	mustRunGit(t, tmp, "init", state)
+	mustRunBacklotInit(t, state)
 	mustRunGit(t, tmp, "init", public)
 	mustRunGit(t, public, "remote", "add", "origin", "git@github.com:massivemoose/ovek.git")
 	if err := os.MkdirAll(filepath.Join(starter, "llm", "prompts"), 0o750); err != nil {
@@ -446,7 +517,7 @@ func TestAttachEmptyStarterTemplateCreatesEmptyStateDir(t *testing.T) {
 	tmp := t.TempDir()
 	state := filepath.Join(tmp, "state")
 	public := filepath.Join(tmp, "public")
-	mustRunGit(t, tmp, "init", state)
+	mustRunBacklotInit(t, state)
 	mustRunGit(t, tmp, "init", public)
 	mustRunGit(t, public, "remote", "add", "origin", "git@github.com:massivemoose/ovek.git")
 	if err := os.Mkdir(filepath.Join(state, ".starter"), 0o755); err != nil {
@@ -483,7 +554,7 @@ func TestAttachDoesNotCopyStarterIntoExistingStateDir(t *testing.T) {
 	public := filepath.Join(tmp, "public")
 	stateDir := filepath.Join(state, "github.com", "massivemoose", "ovek")
 	starter := filepath.Join(state, ".starter")
-	mustRunGit(t, tmp, "init", state)
+	mustRunBacklotInit(t, state)
 	mustRunGit(t, tmp, "init", public)
 	mustRunGit(t, public, "remote", "add", "origin", "git@github.com:massivemoose/ovek.git")
 	if err := os.MkdirAll(starter, 0o755); err != nil {
@@ -529,7 +600,7 @@ func TestAttachRejectsSymlinkInStarterTemplate(t *testing.T) {
 	state := filepath.Join(tmp, "state")
 	public := filepath.Join(tmp, "public")
 	starter := filepath.Join(state, ".starter")
-	mustRunGit(t, tmp, "init", state)
+	mustRunBacklotInit(t, state)
 	mustRunGit(t, tmp, "init", public)
 	mustRunGit(t, public, "remote", "add", "origin", "git@github.com:massivemoose/ovek.git")
 	if err := os.MkdirAll(starter, 0o755); err != nil {
@@ -558,7 +629,7 @@ func TestAttachDoesNotRecreateDeletedStarterFiles(t *testing.T) {
 	tmp := t.TempDir()
 	state := filepath.Join(tmp, "state")
 	public := filepath.Join(tmp, "public")
-	mustRunGit(t, tmp, "init", state)
+	mustRunBacklotInit(t, state)
 	mustRunGit(t, tmp, "init", public)
 	mustRunGit(t, public, "remote", "add", "origin", "git@github.com:massivemoose/ovek.git")
 
@@ -607,7 +678,7 @@ func TestAttachPreservesExistingCustomStateDir(t *testing.T) {
 	state := filepath.Join(tmp, "state")
 	public := filepath.Join(tmp, "public")
 	stateDir := filepath.Join(state, "github.com", "massivemoose", "ovek")
-	mustRunGit(t, tmp, "init", state)
+	mustRunBacklotInit(t, state)
 	mustRunGit(t, tmp, "init", public)
 	mustRunGit(t, public, "remote", "add", "origin", "git@github.com:massivemoose/ovek.git")
 	if err := os.MkdirAll(stateDir, 0o755); err != nil {
@@ -647,7 +718,7 @@ func TestAttachPreservesExistingEmptyStateDir(t *testing.T) {
 	state := filepath.Join(tmp, "state")
 	public := filepath.Join(tmp, "public")
 	stateDir := filepath.Join(state, "github.com", "massivemoose", "ovek")
-	mustRunGit(t, tmp, "init", state)
+	mustRunBacklotInit(t, state)
 	mustRunGit(t, tmp, "init", public)
 	mustRunGit(t, public, "remote", "add", "origin", "git@github.com:massivemoose/ovek.git")
 	if err := os.MkdirAll(stateDir, 0o755); err != nil {
@@ -679,7 +750,7 @@ func TestAttachRejectsStatePathThatIsFile(t *testing.T) {
 	state := filepath.Join(tmp, "state")
 	public := filepath.Join(tmp, "public")
 	stateDir := filepath.Join(state, "github.com", "massivemoose", "ovek")
-	mustRunGit(t, tmp, "init", state)
+	mustRunBacklotInit(t, state)
 	mustRunGit(t, tmp, "init", public)
 	mustRunGit(t, public, "remote", "add", "origin", "git@github.com:massivemoose/ovek.git")
 	if err := os.MkdirAll(filepath.Dir(stateDir), 0o755); err != nil {
@@ -938,8 +1009,28 @@ func TestAttachRejectsBacklotRootInsideAnotherGitRepo(t *testing.T) {
 		if code := Run([]string{"attach", "--root", state}, &out, &errOut); code == 0 {
 			t.Fatalf("attach accepted parent repo subdirectory as Backlot root, stdout = %s", out.String())
 		}
-		if !strings.Contains(errOut.String(), "run backlot init first") {
-			t.Fatalf("attach stderr = %q, want init-first message", errOut.String())
+		if !strings.Contains(errOut.String(), "inside Git repo") {
+			t.Fatalf("attach stderr = %q, want inside-repo message", errOut.String())
+		}
+	})
+}
+
+func TestAttachRejectsBacklotRootEqualToProjectRepo(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+
+	public := filepath.Join(t.TempDir(), "public")
+	mustRunGit(t, filepath.Dir(public), "init", public)
+	mustRunGit(t, public, "remote", "add", "origin", "git@github.com:massivemoose/ovek.git")
+
+	withChdir(t, public, func() {
+		var out, errOut bytes.Buffer
+		if code := Run([]string{"attach", "--root", public}, &out, &errOut); code == 0 {
+			t.Fatalf("attach accepted project repo as Backlot root, stdout = %s", out.String())
+		}
+		if !strings.Contains(errOut.String(), "inside current Git repo") {
+			t.Fatalf("attach stderr = %q, want inside-project message", errOut.String())
 		}
 	})
 }
@@ -1056,7 +1147,7 @@ func TestSyncCleanNoRemote(t *testing.T) {
 	if code := Run([]string{"init", "--root", state}, &out, &errOut); code != 0 {
 		t.Fatalf("init exit code = %d, stderr = %s", code, errOut.String())
 	}
-	mustRunGit(t, state, "add", "README.md")
+	mustRunGit(t, state, "add", "README.md", ".backlot-root")
 	cmd := exec.Command("git", "-c", "core.fsmonitor=false", "-C", state, "-c", "user.name=Backlot Test", "-c", "user.email=backlot@example.invalid", "commit", "-m", "Initial state")
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("commit initial state failed: %v\n%s", err, string(output))
@@ -1167,7 +1258,7 @@ func TestSyncCleanWithOriginSetsUpstreamOnFirstPush(t *testing.T) {
 	configureGitIdentity(t, state)
 	mustRunGit(t, tmp, "init", "--bare", remote)
 	mustRunGit(t, state, "remote", "add", "origin", remote)
-	mustRunGit(t, state, "add", "README.md")
+	mustRunGit(t, state, "add", "README.md", ".backlot-root")
 	mustRunGit(t, state, "commit", "-m", "Initial Backlot archive")
 
 	out.Reset()
@@ -1181,6 +1272,83 @@ func TestSyncCleanWithOriginSetsUpstreamOnFirstPush(t *testing.T) {
 	branch := runGitOutput(t, state, "branch", "--show-current")
 	if got := runGitOutput(t, state, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"); got != "origin/"+branch {
 		t.Fatalf("upstream = %q, want origin/%s", got, branch)
+	}
+}
+
+func TestSyncCleanWithExistingUpstreamPullsRemoteAheadChanges(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+
+	tmp := t.TempDir()
+	remote := createBacklotArchive(t, tmp)
+	stateA := filepath.Join(tmp, "state-a")
+	stateB := filepath.Join(tmp, "state-b")
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"clone", remote, "--root", stateA}, &out, &errOut); code != 0 {
+		t.Fatalf("clone A exit code = %d, stderr = %s", code, errOut.String())
+	}
+	configureGitIdentity(t, stateA)
+	out.Reset()
+	errOut.Reset()
+	if code := Run([]string{"clone", remote, "--root", stateB}, &out, &errOut); code != 0 {
+		t.Fatalf("clone B exit code = %d, stderr = %s", code, errOut.String())
+	}
+	configureGitIdentity(t, stateB)
+
+	notes := filepath.Join(stateA, "github.com", "massivemoose", "ovek", "notes.md")
+	if err := os.MkdirAll(filepath.Dir(notes), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(notes, []byte("from A\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	errOut.Reset()
+	if code := Run([]string{"sync", "--root", stateA, "-m", "A update"}, &out, &errOut); code != 0 {
+		t.Fatalf("sync A exit code = %d, stderr = %s", code, errOut.String())
+	}
+
+	out.Reset()
+	errOut.Reset()
+	if code := Run([]string{"sync", "--root", stateB}, &out, &errOut); code != 0 {
+		t.Fatalf("sync B exit code = %d, stderr = %s", code, errOut.String())
+	}
+	got, err := os.ReadFile(filepath.Join(stateB, "github.com", "massivemoose", "ovek", "notes.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "from A\n" {
+		t.Fatalf("state B notes = %q, want pulled remote change", string(got))
+	}
+}
+
+func TestSyncCleanWithExistingUpstreamPushesLocalAheadCommit(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+
+	tmp := t.TempDir()
+	remote := createBacklotArchive(t, tmp)
+	state := filepath.Join(tmp, "state")
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"clone", remote, "--root", state}, &out, &errOut); code != 0 {
+		t.Fatalf("clone exit code = %d, stderr = %s", code, errOut.String())
+	}
+	configureGitIdentity(t, state)
+	if err := os.WriteFile(filepath.Join(state, "local.md"), []byte("local\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustRunGit(t, state, "add", "local.md")
+	mustRunGit(t, state, "commit", "-m", "Local ahead")
+
+	out.Reset()
+	errOut.Reset()
+	if code := Run([]string{"sync", "--root", state}, &out, &errOut); code != 0 {
+		t.Fatalf("sync exit code = %d, stderr = %s", code, errOut.String())
+	}
+	if got := runGitOutput(t, remote, "log", "-1", "--pretty=%s"); got != "Local ahead" {
+		t.Fatalf("remote last commit = %q, want local-ahead commit", got)
 	}
 }
 
@@ -1199,7 +1367,7 @@ func TestSyncDirtyWithExistingUpstreamPullsAndPushes(t *testing.T) {
 	configureGitIdentity(t, state)
 	mustRunGit(t, tmp, "init", "--bare", remote)
 	mustRunGit(t, state, "remote", "add", "origin", remote)
-	mustRunGit(t, state, "add", "README.md")
+	mustRunGit(t, state, "add", "README.md", ".backlot-root")
 	mustRunGit(t, state, "commit", "-m", "Initial Backlot archive")
 	branch := runGitOutput(t, state, "branch", "--show-current")
 	mustRunGit(t, state, "push", "-u", "origin", branch)
@@ -1217,6 +1385,113 @@ func TestSyncDirtyWithExistingUpstreamPullsAndPushes(t *testing.T) {
 	}
 	if got := runGitOutput(t, remote, "log", "-1", "--pretty=%s"); got != "Update private notes" {
 		t.Fatalf("remote last commit = %q, want sync commit", got)
+	}
+}
+
+func TestSyncConflictPrintsRecoveryAndRerunRefuses(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+
+	tmp := t.TempDir()
+	remote := createBacklotArchive(t, tmp)
+	stateA := filepath.Join(tmp, "state-a")
+	stateB := filepath.Join(tmp, "state-b")
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"clone", remote, "--root", stateA}, &out, &errOut); code != 0 {
+		t.Fatalf("clone A exit code = %d, stderr = %s", code, errOut.String())
+	}
+	configureGitIdentity(t, stateA)
+	out.Reset()
+	errOut.Reset()
+	if code := Run([]string{"clone", remote, "--root", stateB}, &out, &errOut); code != 0 {
+		t.Fatalf("clone B exit code = %d, stderr = %s", code, errOut.String())
+	}
+	configureGitIdentity(t, stateB)
+
+	notesA := filepath.Join(stateA, "github.com", "massivemoose", "ovek", "notes.md")
+	if err := os.MkdirAll(filepath.Dir(notesA), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(notesA, []byte("from A\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	errOut.Reset()
+	if code := Run([]string{"sync", "--root", stateA, "-m", "A update"}, &out, &errOut); code != 0 {
+		t.Fatalf("sync A exit code = %d, stderr = %s", code, errOut.String())
+	}
+
+	notesB := filepath.Join(stateB, "github.com", "massivemoose", "ovek", "notes.md")
+	if err := os.MkdirAll(filepath.Dir(notesB), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(notesB, []byte("from B\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	errOut.Reset()
+	if code := Run([]string{"sync", "--root", stateB, "-m", "B update"}, &out, &errOut); code == 0 {
+		t.Fatalf("sync B succeeded despite conflict, stdout = %s", out.String())
+	}
+	stderr := errOut.String()
+	for _, want := range []string{
+		"Backlot sync hit a Git conflict",
+		"git -C " + stateB + " status",
+		"git -C " + stateB + " rebase --continue",
+		"git -C " + stateB + " rebase --abort",
+	} {
+		if !strings.Contains(stderr, want) {
+			t.Fatalf("conflict stderr missing %q:\n%s", want, stderr)
+		}
+	}
+
+	out.Reset()
+	errOut.Reset()
+	if code := Run([]string{"sync", "--root", stateB}, &out, &errOut); code == 0 {
+		t.Fatalf("sync rerun succeeded during unfinished rebase, stdout = %s", out.String())
+	}
+	if !strings.Contains(errOut.String(), "unfinished Git operation") {
+		t.Fatalf("rerun stderr = %q, want unfinished operation guidance", errOut.String())
+	}
+}
+
+func TestSyncNoUpstreamExistingRemoteBranchFailsClearly(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+
+	tmp := t.TempDir()
+	state := filepath.Join(tmp, "state")
+	remote := filepath.Join(tmp, "remote.git")
+	seed := filepath.Join(tmp, "seed")
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"init", "--root", state}, &out, &errOut); code != 0 {
+		t.Fatalf("init exit code = %d, stderr = %s", code, errOut.String())
+	}
+	configureGitIdentity(t, state)
+	branch := runGitOutput(t, state, "branch", "--show-current")
+	mustRunGit(t, tmp, "init", "--bare", remote)
+	mustRunGit(t, tmp, "init", "-b", branch, seed)
+	configureGitIdentity(t, seed)
+	if err := os.WriteFile(filepath.Join(seed, "README.md"), []byte("remote\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustRunGit(t, seed, "add", "README.md")
+	mustRunGit(t, seed, "commit", "-m", "Remote archive")
+	mustRunGit(t, seed, "remote", "add", "origin", remote)
+	mustRunGit(t, seed, "push", "origin", branch)
+	mustRunGit(t, state, "remote", "add", "origin", remote)
+	mustRunGit(t, state, "add", "README.md", ".backlot-root")
+	mustRunGit(t, state, "commit", "-m", "Local archive")
+
+	out.Reset()
+	errOut.Reset()
+	if code := Run([]string{"sync", "--root", state}, &out, &errOut); code == 0 {
+		t.Fatalf("sync succeeded against existing remote branch without upstream, stdout = %s", out.String())
+	}
+	if !strings.Contains(errOut.String(), "already has a remote branch") {
+		t.Fatalf("sync stderr = %q, want existing remote branch guidance", errOut.String())
 	}
 }
 
@@ -1244,7 +1519,7 @@ func TestSyncRemoteFailureIncludesOperationContext(t *testing.T) {
 		t.Fatalf("sync succeeded with missing remote, stdout = %s", out.String())
 	}
 	stderr := errOut.String()
-	if !strings.Contains(stderr, "first push failed while syncing Backlot root") {
+	if !strings.Contains(stderr, "fetch failed while syncing Backlot root") {
 		t.Fatalf("sync stderr missing operation context:\n%s", stderr)
 	}
 	if !strings.Contains(stderr, "git -c core.fsmonitor=false -C") {
@@ -1264,7 +1539,7 @@ func TestStatusDetectsWrongSymlink(t *testing.T) {
 	state := filepath.Join(tmp, "state")
 	public := filepath.Join(tmp, "public")
 	wrong := filepath.Join(tmp, "wrong")
-	mustRunGit(t, tmp, "init", state)
+	mustRunBacklotInit(t, state)
 	mustRunGit(t, tmp, "init", public)
 	mustRunGit(t, public, "remote", "add", "origin", "git@github.com:massivemoose/ovek.git")
 	if err := os.Mkdir(wrong, 0o755); err != nil {
@@ -1296,7 +1571,7 @@ func TestStatusDetectsMissingAndBrokenSymlink(t *testing.T) {
 	tmp := t.TempDir()
 	state := filepath.Join(tmp, "state")
 	public := filepath.Join(tmp, "public")
-	mustRunGit(t, tmp, "init", state)
+	mustRunBacklotInit(t, state)
 	mustRunGit(t, tmp, "init", public)
 	mustRunGit(t, public, "remote", "add", "origin", "git@github.com:massivemoose/ovek.git")
 
@@ -1366,6 +1641,27 @@ func TestDoctorReportsHealthyAttachedRepo(t *testing.T) {
 	})
 }
 
+func TestDoctorReturnsNonzeroForBrokenSetup(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+
+	tmp := t.TempDir()
+	state := filepath.Join(tmp, "missing-state")
+	public := filepath.Join(tmp, "public")
+	mustRunGit(t, tmp, "init", public)
+	mustRunGit(t, public, "remote", "add", "origin", "git@github.com:massivemoose/ovek.git")
+	withChdir(t, public, func() {
+		var out, errOut bytes.Buffer
+		if code := Run([]string{"doctor", "--root", state}, &out, &errOut); code == 0 {
+			t.Fatalf("doctor returned success for broken setup, stdout = %s", out.String())
+		}
+		if !strings.Contains(out.String(), "✗ Backlot root exists") {
+			t.Fatalf("doctor output = %q, want failed Backlot root check", out.String())
+		}
+	})
+}
+
 func TestAttachDoesNotWriteGitignore(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not installed")
@@ -1418,6 +1714,14 @@ func mustRunGit(t *testing.T, dir string, args ...string) {
 	}
 }
 
+func mustRunBacklotInit(t *testing.T, root string) {
+	t.Helper()
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"init", "--root", root}, &out, &errOut); code != 0 {
+		t.Fatalf("init Backlot root %s exit code = %d, stderr = %s", root, code, errOut.String())
+	}
+}
+
 func configureGitIdentity(t *testing.T, dir string) {
 	t.Helper()
 	mustRunGit(t, dir, "config", "user.name", "Backlot Test")
@@ -1453,7 +1757,10 @@ func createBacklotArchive(t *testing.T, tmp string) string {
 	if err := os.WriteFile(filepath.Join(seed, "README.md"), []byte("# Backlot archive\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	mustRunGit(t, seed, "add", "README.md")
+	if err := os.WriteFile(filepath.Join(seed, ".backlot-root"), []byte(archiveMarker), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustRunGit(t, seed, "add", "README.md", ".backlot-root")
 	mustRunGit(t, seed, "commit", "-m", "Initial archive")
 	mustRunGit(t, seed, "remote", "add", "origin", remote)
 	mustRunGit(t, seed, "push", "origin", "main")

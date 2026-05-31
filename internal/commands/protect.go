@@ -19,6 +19,13 @@ fi
 
 func runProtect(args []string, stdout, stderr io.Writer) error {
 	fs := newFlagSet("protect", stderr)
+	fs.Usage = func() {
+		fmt.Fprintln(stderr, "Usage:")
+		fmt.Fprintln(stderr, "  backlot protect")
+		fmt.Fprintln(stderr)
+		fmt.Fprintln(stderr, "Example:")
+		fmt.Fprintln(stderr, "  backlot protect")
+	}
 	if err := fs.Parse(args); err != nil {
 		return err
 	}

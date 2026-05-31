@@ -71,7 +71,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "Commands:")
 	fmt.Fprintln(w, "  init     [--root PATH] [--remote URL]")
 	fmt.Fprintln(w, "  clone    <archive-url> [--root PATH]")
-	fmt.Fprintln(w, "  attach   [--root PATH] [--link-name .backlot]")
+	fmt.Fprintln(w, "  attach   [--root PATH]")
 	fmt.Fprintln(w, "  detach   [--root PATH]")
 	fmt.Fprintln(w, "  status   [--root PATH]")
 	fmt.Fprintln(w, "  sync     [--root PATH] [-m MESSAGE]")

@@ -19,6 +19,13 @@ Private project notes for this repository.
 
 func runAttach(args []string, stdout, stderr io.Writer) error {
 	fs := newFlagSet("attach", stderr)
+	fs.Usage = func() {
+		fmt.Fprintln(stderr, "Usage:")
+		fmt.Fprintln(stderr, "  backlot attach [--root PATH]")
+		fmt.Fprintln(stderr)
+		fmt.Fprintln(stderr, "Example:")
+		fmt.Fprintln(stderr, "  backlot attach")
+	}
 	rootFlag := fs.String("root", "", "Backlot root path")
 	linkName := fs.String("link-name", ".backlot", "link name")
 	if err := fs.Parse(args); err != nil {
@@ -35,9 +42,6 @@ func runAttach(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if !gitutil.IsGitRepoRoot(root) {
-		return fmt.Errorf("Backlot root %s is not initialized; run backlot init first", root)
-	}
 
 	current, err := cwd()
 	if err != nil {
@@ -45,6 +49,12 @@ func runAttach(args []string, stdout, stderr io.Writer) error {
 	}
 	repoRoot, err := gitutil.RepoRoot(current)
 	if err != nil {
+		return err
+	}
+	if err := ensureRootOutsideProject(root, repoRoot); err != nil {
+		return err
+	}
+	if err := requireBacklotArchiveRoot(root); err != nil {
 		return err
 	}
 	origin, err := gitutil.OriginURL(repoRoot)
