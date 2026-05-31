@@ -373,6 +373,156 @@ func TestAttachCreatesStateSymlinkAndExclude(t *testing.T) {
 	})
 }
 
+func TestAttachDoesNotRecreateDeletedStarterFiles(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+
+	tmp := t.TempDir()
+	state := filepath.Join(tmp, "state")
+	public := filepath.Join(tmp, "public")
+	mustRunGit(t, tmp, "init", state)
+	mustRunGit(t, tmp, "init", public)
+	mustRunGit(t, public, "remote", "add", "origin", "git@github.com:massivemoose/ovek.git")
+
+	withChdir(t, public, func() {
+		var out, errOut bytes.Buffer
+		if code := Run([]string{"attach", "--root", state}, &out, &errOut); code != 0 {
+			t.Fatalf("first attach exit code = %d, stderr = %s", code, errOut.String())
+		}
+	})
+
+	stateDir := filepath.Join(state, "github.com", "massivemoose", "ovek")
+	for _, path := range []string{
+		filepath.Join(stateDir, "notes.md"),
+		filepath.Join(stateDir, "llm"),
+		filepath.Join(stateDir, "scratch"),
+	} {
+		if err := os.RemoveAll(path); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	withChdir(t, public, func() {
+		var out, errOut bytes.Buffer
+		if code := Run([]string{"attach", "--root", state}, &out, &errOut); code != 0 {
+			t.Fatalf("second attach exit code = %d, stderr = %s", code, errOut.String())
+		}
+	})
+
+	for _, path := range []string{
+		filepath.Join(stateDir, "notes.md"),
+		filepath.Join(stateDir, "llm"),
+		filepath.Join(stateDir, "scratch"),
+	} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("attach recreated deleted starter path %s: %v", path, err)
+		}
+	}
+}
+
+func TestAttachPreservesExistingCustomStateDir(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+
+	tmp := t.TempDir()
+	state := filepath.Join(tmp, "state")
+	public := filepath.Join(tmp, "public")
+	stateDir := filepath.Join(state, "github.com", "massivemoose", "ovek")
+	mustRunGit(t, tmp, "init", state)
+	mustRunGit(t, tmp, "init", public)
+	mustRunGit(t, public, "remote", "add", "origin", "git@github.com:massivemoose/ovek.git")
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stateDir, "custom.md"), []byte("custom\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	withChdir(t, public, func() {
+		var out, errOut bytes.Buffer
+		if code := Run([]string{"attach", "--root", state}, &out, &errOut); code != 0 {
+			t.Fatalf("attach exit code = %d, stderr = %s", code, errOut.String())
+		}
+	})
+
+	for _, path := range []string{
+		filepath.Join(stateDir, "notes.md"),
+		filepath.Join(stateDir, "llm"),
+		filepath.Join(stateDir, "scratch"),
+	} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("attach added starter path to custom state dir %s: %v", path, err)
+		}
+	}
+	if got, err := os.ReadFile(filepath.Join(stateDir, "custom.md")); err != nil || string(got) != "custom\n" {
+		t.Fatalf("custom state file changed: got %q, err %v", string(got), err)
+	}
+}
+
+func TestAttachPreservesExistingEmptyStateDir(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+
+	tmp := t.TempDir()
+	state := filepath.Join(tmp, "state")
+	public := filepath.Join(tmp, "public")
+	stateDir := filepath.Join(state, "github.com", "massivemoose", "ovek")
+	mustRunGit(t, tmp, "init", state)
+	mustRunGit(t, tmp, "init", public)
+	mustRunGit(t, public, "remote", "add", "origin", "git@github.com:massivemoose/ovek.git")
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	withChdir(t, public, func() {
+		var out, errOut bytes.Buffer
+		if code := Run([]string{"attach", "--root", state}, &out, &errOut); code != 0 {
+			t.Fatalf("attach exit code = %d, stderr = %s", code, errOut.String())
+		}
+	})
+
+	entries, err := os.ReadDir(stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("attach added starter paths to existing empty state dir: %v", entries)
+	}
+}
+
+func TestAttachRejectsStatePathThatIsFile(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+
+	tmp := t.TempDir()
+	state := filepath.Join(tmp, "state")
+	public := filepath.Join(tmp, "public")
+	stateDir := filepath.Join(state, "github.com", "massivemoose", "ovek")
+	mustRunGit(t, tmp, "init", state)
+	mustRunGit(t, tmp, "init", public)
+	mustRunGit(t, public, "remote", "add", "origin", "git@github.com:massivemoose/ovek.git")
+	if err := os.MkdirAll(filepath.Dir(stateDir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(stateDir, []byte("not a directory\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	withChdir(t, public, func() {
+		var out, errOut bytes.Buffer
+		if code := Run([]string{"attach", "--root", state}, &out, &errOut); code == 0 {
+			t.Fatalf("attach succeeded with file at state path, stdout = %s", out.String())
+		}
+		if !strings.Contains(errOut.String(), "exists and is not a directory") {
+			t.Fatalf("attach stderr = %q, want not-directory error", errOut.String())
+		}
+	})
+}
+
 func TestDetachRemovesManagedSymlinkAndExcludeEntries(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("symlink behavior differs on Windows")

@@ -114,7 +114,8 @@ git@github.com:you/my-project.git
 
 ## Directory Layout
 
-After `backlot attach`, the project looks like this:
+The first time Backlot creates a private workspace for a project, it looks like
+this:
 
 ```txt
 ~/code/my-project/
@@ -131,7 +132,8 @@ After `backlot attach`, the project looks like this:
 
 `notes.md`, `llm/`, and `scratch/` are starter files only. Rename them, delete
 them, or add your own structure. Backlot does not enforce a layout inside a
-project's private workspace.
+project's private workspace, and later `backlot attach` runs will not recreate
+starter files you removed.
 
 ## Using Backlot With LLMs And Agents
 
@@ -264,5 +266,5 @@ Yes. Use `--root PATH` for one command or set `BACKLOT_ROOT` for a shell session
 
 ### Can I choose my own structure inside `.backlot`?
 
-Yes. Backlot creates a few starter files on attach, but it does not enforce
-their layout.
+Yes. Backlot creates a few starter files only when it creates a project
+workspace for the first time, but it does not enforce their layout.
