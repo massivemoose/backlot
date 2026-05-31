@@ -57,7 +57,8 @@ func runAttach(args []string, stdout, stderr io.Writer) error {
 	}
 
 	stateDir := paths.ProjectStateDir(root, key)
-	if err := ensureStarterState(stateDir); err != nil {
+	starter, err := ensureStarterState(root, stateDir)
+	if err != nil {
 		return err
 	}
 	if err := paths.EnsureManagedSymlink(filepath.Join(repoRoot, *linkName), stateDir); err != nil {
@@ -71,33 +72,124 @@ func runAttach(args []string, stdout, stderr io.Writer) error {
 	fmt.Fprintf(stdout, "Project key: %s\n", key)
 	fmt.Fprintf(stdout, "State dir:   %s\n", stateDir)
 	fmt.Fprintf(stdout, "Link:        %s -> %s\n", *linkName, stateDir)
+	fmt.Fprintf(stdout, "Starter:     %s\n", starter)
 	return nil
 }
 
-// ensureStarterState creates starter files only when Backlot creates this
-// project's private folder for the first time. Existing project folders are
-// left untouched so attach never reimposes a layout the user changed.
-func ensureStarterState(stateDir string) error {
+// ensureStarterState adds starter content only when Backlot creates this
+// project's private folder for the first time. It copies root/.starter when
+// present, falls back to built-in starters otherwise, and leaves existing
+// project folders untouched so attach never reimposes a layout the user changed.
+func ensureStarterState(root, stateDir string) (string, error) {
 	info, err := os.Stat(stateDir)
 	if err == nil {
 		if !info.IsDir() {
-			return fmt.Errorf("Backlot state path %s exists and is not a directory", stateDir)
+			return "", fmt.Errorf("Backlot state path %s exists and is not a directory", stateDir)
 		}
-		return nil
+		return "existing archive (contents unchanged)", nil
 	}
 	if !errors.Is(err, os.ErrNotExist) {
-		return err
+		return "", err
+	}
+
+	starterDir := filepath.Join(root, ".starter")
+	starterInfo, err := os.Stat(starterDir)
+	if err == nil {
+		if !starterInfo.IsDir() {
+			return "", fmt.Errorf("Backlot starter template %s exists and is not a directory", starterDir)
+		}
+		if err := validateStarterTemplate(starterDir); err != nil {
+			return "", err
+		}
+		if err := os.MkdirAll(stateDir, 0o755); err != nil {
+			return "", err
+		}
+		if err := copyStarterTemplate(starterDir, stateDir); err != nil {
+			return "", err
+		}
+		return starterDir, nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return "", err
 	}
 
 	if err := os.MkdirAll(stateDir, 0o755); err != nil {
-		return err
+		return "", err
 	}
 	notesPath := filepath.Join(stateDir, "notes.md")
 	if err := os.WriteFile(notesPath, []byte(starterNotes), 0o644); err != nil {
-		return err
+		return "", err
 	}
 	if err := os.Mkdir(filepath.Join(stateDir, "llm"), 0o755); err != nil {
+		return "", err
+	}
+	if err := os.Mkdir(filepath.Join(stateDir, "scratch"), 0o755); err != nil {
+		return "", err
+	}
+	return "built-in defaults", nil
+}
+
+func validateStarterTemplate(starterDir string) error {
+	return filepath.WalkDir(starterDir, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if path == starterDir {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if info.Mode().IsDir() || info.Mode().IsRegular() {
+			return nil
+		}
+		return fmt.Errorf(".starter contains unsupported entry %s", path)
+	})
+}
+
+func copyStarterTemplate(starterDir, stateDir string) error {
+	return filepath.WalkDir(starterDir, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if path == starterDir {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(starterDir, path)
+		if err != nil {
+			return err
+		}
+		dst := filepath.Join(stateDir, rel)
+		if info.IsDir() {
+			return os.Mkdir(dst, info.Mode().Perm())
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf(".starter contains unsupported entry %s", path)
+		}
+		return copyStarterFile(path, dst, info.Mode().Perm())
+	})
+}
+
+func copyStarterFile(src, dst string, mode os.FileMode) error {
+	in, err := os.Open(src)
+	if err != nil {
 		return err
 	}
-	return os.Mkdir(filepath.Join(stateDir, "scratch"), 0o755)
+	defer in.Close()
+
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	if _, err := io.Copy(out, in); err != nil {
+		return err
+	}
+	return out.Chmod(mode)
 }

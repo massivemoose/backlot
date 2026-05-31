@@ -315,12 +315,15 @@ func TestAttachCreatesStateSymlinkAndExclude(t *testing.T) {
 	mustRunGit(t, tmp, "init", public)
 	mustRunGit(t, public, "remote", "add", "origin", "git@github.com:massivemoose/ovek.git")
 
+	var out, errOut bytes.Buffer
 	withChdir(t, public, func() {
-		var out, errOut bytes.Buffer
 		if code := Run([]string{"attach", "--root", state}, &out, &errOut); code != 0 {
 			t.Fatalf("attach exit code = %d, stderr = %s", code, errOut.String())
 		}
 	})
+	if !strings.Contains(out.String(), "Starter:     built-in defaults") {
+		t.Fatalf("attach output = %q, want built-in starter message", out.String())
+	}
 
 	stateDir := filepath.Join(state, "github.com", "massivemoose", "ovek")
 	for _, path := range []string{
@@ -369,6 +372,180 @@ func TestAttachCreatesStateSymlinkAndExclude(t *testing.T) {
 			if !strings.Contains(text, want) {
 				t.Fatalf("status output missing %q:\n%s", want, text)
 			}
+		}
+	})
+}
+
+func TestAttachCopiesCustomStarterTemplate(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+
+	tmp := t.TempDir()
+	state := filepath.Join(tmp, "state")
+	public := filepath.Join(tmp, "public")
+	starter := filepath.Join(state, ".starter")
+	mustRunGit(t, tmp, "init", state)
+	mustRunGit(t, tmp, "init", public)
+	mustRunGit(t, public, "remote", "add", "origin", "git@github.com:massivemoose/ovek.git")
+	if err := os.MkdirAll(filepath.Join(starter, "llm", "prompts"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(starter, "roadmap.md"), []byte("# Roadmap\n"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(starter, ".secret-note"), []byte("hidden\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(starter, "llm", "prompts", "review.md"), []byte("review\n"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+
+	var out, errOut bytes.Buffer
+	withChdir(t, public, func() {
+		if code := Run([]string{"attach", "--root", state}, &out, &errOut); code != 0 {
+			t.Fatalf("attach exit code = %d, stderr = %s", code, errOut.String())
+		}
+	})
+	if !strings.Contains(out.String(), "Starter:     "+starter) {
+		t.Fatalf("attach output = %q, want custom starter path %s", out.String(), starter)
+	}
+
+	stateDir := filepath.Join(state, "github.com", "massivemoose", "ovek")
+	for path, want := range map[string]string{
+		filepath.Join(stateDir, "roadmap.md"):                  "# Roadmap\n",
+		filepath.Join(stateDir, ".secret-note"):                "hidden\n",
+		filepath.Join(stateDir, "llm", "prompts", "review.md"): "review\n",
+	} {
+		got, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("expected copied starter file %s: %v", path, err)
+		}
+		if string(got) != want {
+			t.Fatalf("copied starter file %s = %q, want %q", path, string(got), want)
+		}
+	}
+	for _, path := range []string{
+		filepath.Join(stateDir, "notes.md"),
+		filepath.Join(stateDir, "scratch"),
+	} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("attach added built-in starter path despite custom template %s: %v", path, err)
+		}
+	}
+	if got := runGitOutput(t, public, "status", "--short"); got != "" {
+		t.Fatalf("public repo status = %q, want clean", got)
+	}
+}
+
+func TestAttachEmptyStarterTemplateCreatesEmptyStateDir(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+
+	tmp := t.TempDir()
+	state := filepath.Join(tmp, "state")
+	public := filepath.Join(tmp, "public")
+	mustRunGit(t, tmp, "init", state)
+	mustRunGit(t, tmp, "init", public)
+	mustRunGit(t, public, "remote", "add", "origin", "git@github.com:massivemoose/ovek.git")
+	if err := os.Mkdir(filepath.Join(state, ".starter"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	var out, errOut bytes.Buffer
+	withChdir(t, public, func() {
+		if code := Run([]string{"attach", "--root", state}, &out, &errOut); code != 0 {
+			t.Fatalf("attach exit code = %d, stderr = %s", code, errOut.String())
+		}
+	})
+	if !strings.Contains(out.String(), "Starter:     "+filepath.Join(state, ".starter")) {
+		t.Fatalf("attach output = %q, want empty custom starter path", out.String())
+	}
+
+	stateDir := filepath.Join(state, "github.com", "massivemoose", "ovek")
+	entries, err := os.ReadDir(stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("empty .starter created project files: %v", entries)
+	}
+}
+
+func TestAttachDoesNotCopyStarterIntoExistingStateDir(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+
+	tmp := t.TempDir()
+	state := filepath.Join(tmp, "state")
+	public := filepath.Join(tmp, "public")
+	stateDir := filepath.Join(state, "github.com", "massivemoose", "ovek")
+	starter := filepath.Join(state, ".starter")
+	mustRunGit(t, tmp, "init", state)
+	mustRunGit(t, tmp, "init", public)
+	mustRunGit(t, public, "remote", "add", "origin", "git@github.com:massivemoose/ovek.git")
+	if err := os.MkdirAll(starter, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(starter, "template.md"), []byte("template\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stateDir, "custom.md"), []byte("custom\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var out, errOut bytes.Buffer
+	withChdir(t, public, func() {
+		if code := Run([]string{"attach", "--root", state}, &out, &errOut); code != 0 {
+			t.Fatalf("attach exit code = %d, stderr = %s", code, errOut.String())
+		}
+	})
+	if !strings.Contains(out.String(), "Starter:     existing archive (contents unchanged)") {
+		t.Fatalf("attach output = %q, want unchanged starter message", out.String())
+	}
+
+	if _, err := os.Stat(filepath.Join(stateDir, "template.md")); !os.IsNotExist(err) {
+		t.Fatalf("attach copied .starter into existing state dir: %v", err)
+	}
+	if got, err := os.ReadFile(filepath.Join(stateDir, "custom.md")); err != nil || string(got) != "custom\n" {
+		t.Fatalf("custom state file changed: got %q, err %v", string(got), err)
+	}
+}
+
+func TestAttachRejectsSymlinkInStarterTemplate(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink behavior differs on Windows")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+
+	tmp := t.TempDir()
+	state := filepath.Join(tmp, "state")
+	public := filepath.Join(tmp, "public")
+	starter := filepath.Join(state, ".starter")
+	mustRunGit(t, tmp, "init", state)
+	mustRunGit(t, tmp, "init", public)
+	mustRunGit(t, public, "remote", "add", "origin", "git@github.com:massivemoose/ovek.git")
+	if err := os.MkdirAll(starter, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("/tmp", filepath.Join(starter, "link")); err != nil {
+		t.Fatal(err)
+	}
+
+	withChdir(t, public, func() {
+		var out, errOut bytes.Buffer
+		if code := Run([]string{"attach", "--root", state}, &out, &errOut); code == 0 {
+			t.Fatalf("attach succeeded with symlink in starter template, stdout = %s", out.String())
+		}
+		if !strings.Contains(errOut.String(), ".starter contains unsupported entry") {
+			t.Fatalf("attach stderr = %q, want unsupported starter entry error", errOut.String())
 		}
 	})
 }
