@@ -135,6 +135,26 @@ them, or add your own structure. Backlot does not enforce a layout inside a
 project's private workspace, and later `backlot attach` runs will not recreate
 starter files you removed.
 
+### Custom Starters
+
+Create your own `~/.backlot/.starter/` to customize new project workspaces:
+
+```txt
+~/.backlot/
+  .starter/
+    notes.md
+    roadmap.md
+    llm/
+      agent_state.md
+      prompts.md
+    scripts/
+```
+
+When Backlot creates a project private folder for the first time, it copies the
+contents of `.starter/` into that folder. The copy is literal: no variables, no
+template rendering, and no later re-application. If `.starter/` exists but is
+empty, new project folders start empty.
+
 ## Using Backlot With LLMs And Agents
 
 Backlot is useful as a local memory space for coding agents. Add something like
