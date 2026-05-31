@@ -8,13 +8,12 @@ putting that material in the project repo's Git history.
 
 One private archive. Many projects. No nested Git repo sprawl.
 
-> Demo GIF coming soon.
-
 ## Contents
 
 - [Why Backlot?](#why-backlot)
 - [Install](#install)
 - [Quickstart](#quickstart)
+- [Syncing Across Machines](#syncing-across-machines)
 - [How It Works](#how-it-works)
 - [Directory Layout](#directory-layout)
 - [Using Backlot With LLMs And Agents](#using-backlot-with-llms-and-agents)
@@ -45,9 +44,21 @@ brew install massivemoose/tap/backlot
 
 Manual download:
 
-1. Download the archive for your OS and architecture from the GitHub Releases page.
-2. Verify it against `checksums.txt`.
+1. Download the archive for your OS and architecture from the
+   [GitHub Releases page](https://github.com/massivemoose/backlot/releases).
+2. Verify it against `checksums.txt`:
+
+   ```sh
+   shasum -a 256 -c checksums.txt
+   ```
+
 3. Place the `backlot` binary somewhere on your `PATH`.
+
+Install into your Go binary path:
+
+```sh
+go install github.com/massivemoose/backlot@latest
+```
 
 Build from source:
 
@@ -55,35 +66,32 @@ Build from source:
 go build -o backlot .
 ```
 
-Install into your Go binary path:
-
-```sh
-go install .
-```
-
 ## Quickstart
 
-Start locally:
+Start from an existing project repo that has an `origin` remote:
 
 ```sh
 backlot init
 cd ~/code/my-project
+git remote get-url origin
 backlot attach
 ```
 
 Your private workspace now lives at `.backlot/` inside the project repo and is
-stored under `~/.backlot`.
+stored under `~/.backlot`. Backlot uses your project repo's `origin` URL to
+choose a stable archive path such as `github.com/you/my-project`.
 
-To back it up or use it across machines, create a private repo named
-`backlot-archive` on GitHub or your Git host, then add it as the archive remote:
+To back it up or use it across machines, create an empty private repo named
+`backlot-archive` on GitHub or your Git host. Do not initialize that repo with a
+README, license, or `.gitignore`. Then add it as the archive remote:
 
 ```sh
 backlot init --remote git@github.com:you/backlot-archive.git
 backlot sync -m "Initial Backlot archive"
 ```
 
-If you want to work on another machine, you can easily clone the existing archive
-and attach your project repo again:
+Use `init --remote` for first-machine setup. If you want to work on another
+machine, clone the existing archive and attach your project repo again:
 
 ```sh
 backlot clone git@github.com:you/backlot-archive.git
@@ -92,6 +100,23 @@ backlot attach
 ```
 
 For normal setup, you should not need to modify `~/.backlot` directly.
+
+## Syncing Across Machines
+
+`backlot sync` is a two-way Git sync for the private archive. It commits local
+private changes, fetches remote archive changes, rebases local commits when
+needed, and pushes the result.
+
+Run it before switching machines and after starting work on another machine:
+
+```sh
+backlot sync
+```
+
+If two machines edit the same private file, Git may report a conflict. Backlot
+will stop and print the exact `git -C ~/.backlot ...` commands to inspect,
+continue, or abort the rebase. Conflict resolution is manual for now so Backlot
+does not guess which private notes to keep.
 
 ## How It Works
 
@@ -187,7 +212,7 @@ The structure is yours. Backlot only provides the private place to keep it.
 ```sh
 backlot init [--root PATH] [--remote URL]
 backlot clone <archive-url> [--root PATH]
-backlot attach [--root PATH] [--link-name .backlot]
+backlot attach [--root PATH]
 backlot detach [--root PATH]
 backlot status [--root PATH]
 backlot sync [--root PATH] [-m MESSAGE]
@@ -201,7 +226,7 @@ backlot version
 - `attach` creates `.backlot` for the current repo.
 - `detach` removes the current repo's Backlot symlink and local exclude entries.
 - `status` shows the current repo's Backlot state.
-- `sync` commits and pushes the private archive.
+- `sync` pulls, commits, rebases, and pushes the private archive.
 - `protect` installs a local pre-commit guard for `.backlot`.
 - `doctor` diagnoses setup issues.
 - `version` prints build metadata.
@@ -277,8 +302,7 @@ repo. `backlot sync` runs Git commands inside the Backlot archive.
 ### What if `.backlot` already exists?
 
 Backlot refuses to overwrite a `.backlot` file, directory, or symlink it does
-not manage. Move the existing path or choose a different attach name with
-`backlot attach --link-name`.
+not manage. Move the existing path before running `backlot attach`.
 
 ### Can I use multiple Backlot archives?
 
