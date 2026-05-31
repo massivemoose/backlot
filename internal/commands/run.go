@@ -38,7 +38,9 @@ func RunWithBuildInfo(args []string, stdout, stderr io.Writer, build BuildInfo) 
 
 	commands := map[string]commandFunc{
 		"init":    runInit,
+		"clone":   runClone,
 		"attach":  runAttach,
+		"detach":  runDetach,
 		"status":  runStatus,
 		"sync":    runSync,
 		"protect": runProtect,
@@ -68,7 +70,9 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Commands:")
 	fmt.Fprintln(w, "  init     [--root PATH] [--remote URL]")
+	fmt.Fprintln(w, "  clone    <archive-url> [--root PATH]")
 	fmt.Fprintln(w, "  attach   [--root PATH] [--link-name .backlot]")
+	fmt.Fprintln(w, "  detach   [--root PATH]")
 	fmt.Fprintln(w, "  status   [--root PATH]")
 	fmt.Fprintln(w, "  sync     [--root PATH] [-m MESSAGE]")
 	fmt.Fprintln(w, "  protect")

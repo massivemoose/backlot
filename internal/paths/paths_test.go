@@ -2,10 +2,11 @@ package paths
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/massivemoose/backlot/internal/gitutil"
 )
 
 func TestBacklotRootResolution(t *testing.T) {
@@ -101,31 +102,18 @@ func countExcludeLine(text, want string) int {
 
 func mustRunGit(t *testing.T, dir string, args ...string) {
 	t.Helper()
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not installed")
-	}
-	cmd := exec.Command("git", append([]string{"-c", "core.fsmonitor=false", "-C", dir}, args...)...)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("git -C %s %s failed: %v\n%s", dir, strings.Join(args, " "), err, string(output))
+	if _, err := gitutil.RunGit(dir, args...); err != nil {
+		t.Fatal(err)
 	}
 }
 
 func runGitPath(t *testing.T, dir string, path string) string {
 	t.Helper()
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not installed")
-	}
-	cmd := exec.Command("git", "-c", "core.fsmonitor=false", "-C", dir, "rev-parse", "--git-path", path)
-	output, err := cmd.CombinedOutput()
+	got, err := gitutil.GitPath(dir, path)
 	if err != nil {
-		t.Fatalf("git path %s failed: %v\n%s", path, err, string(output))
+		t.Fatal(err)
 	}
-	got := strings.TrimSpace(string(output))
-	if filepath.IsAbs(got) {
-		return got
-	}
-	return filepath.Join(dir, got)
+	return got
 }
 
 func TestEnsureManagedSymlink(t *testing.T) {

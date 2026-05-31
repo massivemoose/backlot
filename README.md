@@ -51,11 +51,24 @@ backlot init --remote git@github.com:you/backlot-archive.git
 backlot sync -m "Initial Backlot archive"
 ```
 
+If you have an existing `backlot-archive` repo, you can easily `clone` it to
+another machine and then `attach` it to whatever repos you're working on. If you
+already have things in your `backlot-archive` for a repo then cloning will let
+you pick up where you left off:
+
+```sh
+backlot clone git@github.com:you/backlot-archive.git
+cd ~/code/my-public-repo
+backlot attach
+```
+
 ## Commands
 
 ```sh
 backlot init [--root PATH] [--remote URL]
+backlot clone <archive-url> [--root PATH]
 backlot attach [--root PATH] [--link-name .backlot]
+backlot detach [--root PATH]
 backlot status [--root PATH]
 backlot sync [--root PATH] [-m MESSAGE]
 backlot protect
@@ -76,6 +89,23 @@ Backlot root resolution order:
 - Backlot does not stage files in your public repo.
 - Backlot only syncs private state when you run `backlot sync`.
 - Private state is stored in your own local/private Git repo.
+
+## Cleanup
+
+To disconnect Backlot from a repo, run:
+
+```sh
+backlot detach
+```
+
+This removes the managed `.backlot` symlink from the current repo and removes
+Backlot's local exclude entries from `.git/info/exclude`. It does not delete
+your private archive or any project notes.
+
+If you intentionally want to remove the entire private archive from your
+machine, delete `~/.backlot` yourself after detaching the repos you care about.
+Deleting `~/.backlot` does not automatically clean up `.backlot` symlinks in
+attached repos; those links become broken until you remove them.
 
 ## Install
 
