@@ -68,6 +68,7 @@ backlot attach
 backlot init [--root PATH] [--remote URL]
 backlot clone <archive-url> [--root PATH]
 backlot attach [--root PATH] [--link-name .backlot]
+backlot detach [--root PATH]
 backlot status [--root PATH]
 backlot sync [--root PATH] [-m MESSAGE]
 backlot protect
@@ -88,6 +89,23 @@ Backlot root resolution order:
 - Backlot does not stage files in your public repo.
 - Backlot only syncs private state when you run `backlot sync`.
 - Private state is stored in your own local/private Git repo.
+
+## Cleanup
+
+To disconnect Backlot from a repo, run:
+
+```sh
+backlot detach
+```
+
+This removes the managed `.backlot` symlink from the current repo and removes
+Backlot's local exclude entries from `.git/info/exclude`. It does not delete
+your private archive or any project notes.
+
+If you intentionally want to remove the entire private archive from your
+machine, delete `~/.backlot` yourself after detaching the repos you care about.
+Deleting `~/.backlot` does not automatically clean up `.backlot` symlinks in
+attached repos; those links become broken until you remove them.
 
 ## Install
 

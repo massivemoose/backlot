@@ -100,6 +100,50 @@ func ExcludeContains(repoRoot string, linkName string) (bool, error) {
 	return excludeHasEntry(string(data), linkName), nil
 }
 
+func RemoveExclude(repoRoot string, linkName string) error {
+	if err := ValidateLinkName(linkName); err != nil {
+		return err
+	}
+	excludePath, err := gitutil.GitPath(repoRoot, "info/exclude")
+	if err != nil {
+		return err
+	}
+	data, err := os.ReadFile(excludePath)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+
+	entries := map[string]bool{
+		linkName:       true,
+		linkName + "/": true,
+	}
+	text := string(data)
+	lines := strings.Split(text, "\n")
+	hadTrailingNewline := strings.HasSuffix(text, "\n")
+	kept := make([]string, 0, len(lines))
+	changed := false
+	for i, line := range lines {
+		if i == len(lines)-1 && line == "" && hadTrailingNewline {
+			continue
+		}
+		if entries[strings.TrimSpace(line)] {
+			changed = true
+			continue
+		}
+		kept = append(kept, line)
+	}
+	if !changed {
+		return nil
+	}
+	if len(kept) == 0 {
+		return os.WriteFile(excludePath, nil, 0o644)
+	}
+	return os.WriteFile(excludePath, []byte(strings.Join(kept, "\n")+"\n"), 0o644)
+}
+
 func EnsureManagedSymlink(linkPath, target string) error {
 	target, err := filepath.Abs(target)
 	if err != nil {
@@ -129,6 +173,42 @@ func EnsureManagedSymlink(linkPath, target string) error {
 		return fmt.Errorf("%s already exists and is not managed by Backlot.\nMove it or choose another link name with --link-name.", filepath.Base(linkPath))
 	}
 	return nil
+}
+
+func RemoveManagedSymlinkUnderRoot(linkPath, root string) (bool, error) {
+	root, err := filepath.Abs(root)
+	if err != nil {
+		return false, err
+	}
+	root = filepath.Clean(root)
+
+	info, err := os.Lstat(linkPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	name := filepath.Base(linkPath)
+	if info.Mode()&os.ModeSymlink == 0 {
+		return false, fmt.Errorf("%s exists and is not managed by Backlot", name)
+	}
+
+	target, err := os.Readlink(linkPath)
+	if err != nil {
+		return false, err
+	}
+	if !filepath.IsAbs(target) {
+		target = filepath.Join(filepath.Dir(linkPath), target)
+	}
+	target = filepath.Clean(target)
+	if !pathWithinOrEqual(target, root) {
+		return false, fmt.Errorf("%s exists and is not managed by Backlot", name)
+	}
+	if err := os.Remove(linkPath); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func LinkDescription(linkPath, expectedTarget string) string {
@@ -197,6 +277,14 @@ func cleanUserPath(value string) (string, error) {
 		value = abs
 	}
 	return filepath.Clean(value), nil
+}
+
+func pathWithinOrEqual(path, root string) bool {
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return false
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
 }
 
 func excludeHasEntry(text, entry string) bool {

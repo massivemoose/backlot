@@ -373,6 +373,201 @@ func TestAttachCreatesStateSymlinkAndExclude(t *testing.T) {
 	})
 }
 
+func TestDetachRemovesManagedSymlinkAndExcludeEntries(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink behavior differs on Windows")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+
+	tmp := t.TempDir()
+	state := filepath.Join(tmp, "state")
+	stateDir := filepath.Join(state, "github.com", "massivemoose", "ovek")
+	public := filepath.Join(tmp, "public")
+	mustRunGit(t, tmp, "init", public)
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(stateDir, filepath.Join(public, ".backlot")); err != nil {
+		t.Fatal(err)
+	}
+	excludePath := filepath.Join(public, ".git", "info", "exclude")
+	exclude := "# local excludes\n.backlot\n.backlot/\n*.log\n"
+	if err := os.WriteFile(excludePath, []byte(exclude), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	hook := filepath.Join(public, ".git", "hooks", "pre-commit")
+	hookData := []byte("# custom hook\n")
+	if err := os.WriteFile(hook, hookData, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	withChdir(t, public, func() {
+		var out, errOut bytes.Buffer
+		if code := Run([]string{"detach", "--root", state}, &out, &errOut); code != 0 {
+			t.Fatalf("detach exit code = %d, stderr = %s", code, errOut.String())
+		}
+		if !strings.Contains(out.String(), "Detached Backlot") {
+			t.Fatalf("detach output = %q, want success message", out.String())
+		}
+	})
+
+	if _, err := os.Lstat(filepath.Join(public, ".backlot")); !os.IsNotExist(err) {
+		t.Fatalf(".backlot still exists after detach: %v", err)
+	}
+	if _, err := os.Stat(stateDir); err != nil {
+		t.Fatalf("detach removed private state dir: %v", err)
+	}
+	gotExclude, err := os.ReadFile(excludePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(gotExclude) != "# local excludes\n*.log\n" {
+		t.Fatalf("exclude contents = %q, want unrelated entries preserved", string(gotExclude))
+	}
+	gotHook, err := os.ReadFile(hook)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(gotHook) != string(hookData) {
+		t.Fatalf("detach changed pre-commit hook: %q", string(gotHook))
+	}
+}
+
+func TestDetachRemovesBrokenManagedSymlink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink behavior differs on Windows")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+
+	tmp := t.TempDir()
+	state := filepath.Join(tmp, "deleted-state")
+	public := filepath.Join(tmp, "public")
+	mustRunGit(t, tmp, "init", public)
+	if err := os.Symlink(filepath.Join(state, "github.com", "massivemoose", "ovek"), filepath.Join(public, ".backlot")); err != nil {
+		t.Fatal(err)
+	}
+
+	withChdir(t, public, func() {
+		var out, errOut bytes.Buffer
+		if code := Run([]string{"detach", "--root", state}, &out, &errOut); code != 0 {
+			t.Fatalf("detach exit code = %d, stderr = %s", code, errOut.String())
+		}
+	})
+
+	if _, err := os.Lstat(filepath.Join(public, ".backlot")); !os.IsNotExist(err) {
+		t.Fatalf("broken .backlot symlink still exists after detach: %v", err)
+	}
+}
+
+func TestDetachMissingLinkCleansExcludeWithoutOrigin(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+
+	tmp := t.TempDir()
+	state := filepath.Join(tmp, "state")
+	public := filepath.Join(tmp, "public")
+	mustRunGit(t, tmp, "init", public)
+	excludePath := filepath.Join(public, ".git", "info", "exclude")
+	if err := os.WriteFile(excludePath, []byte(".backlot\n.keep\n.backlot/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	withChdir(t, public, func() {
+		var out, errOut bytes.Buffer
+		if code := Run([]string{"detach", "--root", state}, &out, &errOut); code != 0 {
+			t.Fatalf("detach exit code = %d, stderr = %s", code, errOut.String())
+		}
+		if !strings.Contains(out.String(), "No .backlot link found") {
+			t.Fatalf("detach output = %q, want missing link message", out.String())
+		}
+	})
+
+	gotExclude, err := os.ReadFile(excludePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(gotExclude) != ".keep\n" {
+		t.Fatalf("exclude contents = %q, want Backlot entries removed", string(gotExclude))
+	}
+}
+
+func TestDetachRefusesUnmanagedBacklotPath(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink behavior differs on Windows")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+
+	tests := []struct {
+		name  string
+		setup func(t *testing.T, public string, state string)
+	}{
+		{
+			name: "directory",
+			setup: func(t *testing.T, public string, state string) {
+				t.Helper()
+				if err := os.Mkdir(filepath.Join(public, ".backlot"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			name: "outside symlink",
+			setup: func(t *testing.T, public string, state string) {
+				t.Helper()
+				outside := filepath.Join(filepath.Dir(state), "outside")
+				if err := os.Mkdir(outside, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(outside, filepath.Join(public, ".backlot")); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmp := t.TempDir()
+			state := filepath.Join(tmp, "state")
+			public := filepath.Join(tmp, "public")
+			mustRunGit(t, tmp, "init", public)
+			excludePath := filepath.Join(public, ".git", "info", "exclude")
+			if err := os.WriteFile(excludePath, []byte(".backlot\n.backlot/\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			tt.setup(t, public, state)
+
+			withChdir(t, public, func() {
+				var out, errOut bytes.Buffer
+				if code := Run([]string{"detach", "--root", state}, &out, &errOut); code == 0 {
+					t.Fatalf("detach succeeded for unmanaged path, stdout = %s", out.String())
+				}
+				if !strings.Contains(errOut.String(), "is not managed by Backlot") {
+					t.Fatalf("detach stderr = %q, want unmanaged error", errOut.String())
+				}
+			})
+
+			if _, err := os.Lstat(filepath.Join(public, ".backlot")); err != nil {
+				t.Fatalf(".backlot was removed despite refusal: %v", err)
+			}
+			gotExclude, err := os.ReadFile(excludePath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(gotExclude) != ".backlot\n.backlot/\n" {
+				t.Fatalf("exclude changed despite refusal: %q", string(gotExclude))
+			}
+		})
+	}
+}
+
 func TestAttachRequiresInitializedBacklotRoot(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not installed")
