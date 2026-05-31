@@ -99,11 +99,11 @@ type scriptResult struct {
 
 func runReleaseScript(t *testing.T, dir string, env []string, args ...string) scriptResult {
 	t.Helper()
-	root, err := os.Getwd()
+	scriptsDir, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command(filepath.Join(root, "scripts", "release"), args...)
+	cmd := exec.Command(filepath.Join(scriptsDir, "release"), args...)
 	cmd.Dir = dir
 	cmd.Env = env
 	output, err := cmd.CombinedOutput()
