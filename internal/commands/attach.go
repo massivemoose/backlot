@@ -74,18 +74,30 @@ func runAttach(args []string, stdout, stderr io.Writer) error {
 	return nil
 }
 
+// ensureStarterState creates starter files only when Backlot creates this
+// project's private folder for the first time. Existing project folders are
+// left untouched so attach never reimposes a layout the user changed.
 func ensureStarterState(stateDir string) error {
-	if err := os.MkdirAll(filepath.Join(stateDir, "llm"), 0o755); err != nil {
+	info, err := os.Stat(stateDir)
+	if err == nil {
+		if !info.IsDir() {
+			return fmt.Errorf("Backlot state path %s exists and is not a directory", stateDir)
+		}
+		return nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Join(stateDir, "scratch"), 0o755); err != nil {
+
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
 		return err
 	}
 	notesPath := filepath.Join(stateDir, "notes.md")
-	if _, err := os.Stat(notesPath); errors.Is(err, os.ErrNotExist) {
-		return os.WriteFile(notesPath, []byte(starterNotes), 0o644)
-	} else if err != nil {
+	if err := os.WriteFile(notesPath, []byte(starterNotes), 0o644); err != nil {
 		return err
 	}
-	return nil
+	if err := os.Mkdir(filepath.Join(stateDir, "llm"), 0o755); err != nil {
+		return err
+	}
+	return os.Mkdir(filepath.Join(stateDir, "scratch"), 0o755)
 }
