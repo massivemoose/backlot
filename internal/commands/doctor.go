@@ -83,6 +83,12 @@ func runDoctor(args []string, stdout, stderr io.Writer) error {
 		} else {
 			failCheck("Backlot root is a Backlot archive")
 		}
+		if gitutil.IsGitRepoRoot(root) {
+			if state, err := detectSyncState(root); err == nil && state.Interrupted() {
+				failCheck("Backlot sync was interrupted by a conflict")
+				fmt.Fprintf(stdout, "  Recovery: %s or backlot sync --abort\n", syncRecoverySummary())
+			}
+		}
 	} else {
 		failCheck("Backlot root exists")
 		failCheck("Backlot root is a Git repo")

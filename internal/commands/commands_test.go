@@ -1732,6 +1732,58 @@ func TestDoctorReturnsNonzeroForBrokenSetup(t *testing.T) {
 	})
 }
 
+func TestStatusReportsInterruptedSync(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink behavior differs on Windows")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+
+	state, public, _ := createAttachedInterruptedSync(t)
+	withChdir(t, public, func() {
+		var out, errOut bytes.Buffer
+		if code := Run([]string{"status", "--root", state}, &out, &errOut); code != 0 {
+			t.Fatalf("status exit code = %d, stderr = %s", code, errOut.String())
+		}
+		text := out.String()
+		if !strings.Contains(text, "State repo:    sync interrupted") {
+			t.Fatalf("status output = %q, want interrupted state", text)
+		}
+		if !strings.Contains(text, "Recovery:      resolve conflicts in .backlot/ and run backlot sync --continue") {
+			t.Fatalf("status output = %q, want recovery guidance", text)
+		}
+	})
+}
+
+func TestDoctorReportsInterruptedSync(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink behavior differs on Windows")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+
+	state, public, _ := createAttachedInterruptedSync(t)
+	withChdir(t, public, func() {
+		var out, errOut bytes.Buffer
+		if code := Run([]string{"doctor", "--root", state}, &out, &errOut); code == 0 {
+			t.Fatalf("doctor succeeded during interrupted sync, stdout = %s", out.String())
+		}
+		text := out.String()
+		for _, want := range []string{
+			"✗ Backlot sync was interrupted by a conflict",
+			"resolve conflicts in .backlot/",
+			"backlot sync --continue",
+			"backlot sync --abort",
+		} {
+			if !strings.Contains(text, want) {
+				t.Fatalf("doctor output missing %q:\n%s", want, text)
+			}
+		}
+	})
+}
+
 func TestAttachDoesNotWriteGitignore(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not installed")
