@@ -76,19 +76,23 @@ Type "backlot attach"
 Enter
 Sleep 4s
 
-Type 'printf "\nDemo launch notes stay private.\n" >> .backlot/notes.md'
+Type "git status --short"
 Enter
-Sleep 2s
+Sleep 3s
+
+Type 'printf "handoff: still private\n" >> .backlot/llm/agent_state.md'
+Enter
+Sleep 3s
+
+Type "git status --short"
+Enter
+Sleep 3s
 
 Type "backlot status"
 Enter
 Sleep 4s
 
-Type "git status --short --ignored"
-Enter
-Sleep 4s
-
-Type 'backlot sync -m "Add private project notes"'
+Type 'backlot sync -m "Update private agent state"'
 Enter
 Sleep 4s
 
