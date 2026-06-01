@@ -24,11 +24,25 @@ func runSync(args []string, stdout, stderr io.Writer) error {
 	}
 	rootFlag := fs.String("root", "", "Backlot root path")
 	message := fs.String("m", "Update backlot state", "commit message")
+	continueFlag := fs.Bool("continue", false, "continue an interrupted Backlot sync")
+	abortFlag := fs.Bool("abort", false, "abort an interrupted Backlot sync")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() != 0 {
 		return flag.ErrHelp
+	}
+	if *continueFlag && *abortFlag {
+		return fmt.Errorf("choose only one of --continue or --abort")
+	}
+	messageProvided := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "m" {
+			messageProvided = true
+		}
+	})
+	if (*continueFlag || *abortFlag) && messageProvided {
+		return fmt.Errorf("-m is only supported for normal backlot sync")
 	}
 
 	root, err := paths.BacklotRoot(*rootFlag)
@@ -40,6 +54,12 @@ func runSync(args []string, stdout, stderr io.Writer) error {
 	}
 	if err := requireBacklotArchiveRoot(root); err != nil {
 		return err
+	}
+	if *abortFlag {
+		return runSyncAbort(root, stdout)
+	}
+	if *continueFlag {
+		return runSyncContinue(root, stdout)
 	}
 	if err := ensureNoGitOperationInProgress(root); err != nil {
 		return err
@@ -112,6 +132,51 @@ func runSync(args []string, stdout, stderr io.Writer) error {
 	return nil
 }
 
+func runSyncAbort(root string, stdout io.Writer) error {
+	state, err := detectSyncState(root)
+	if err != nil {
+		return err
+	}
+	if !state.Interrupted() {
+		return fmt.Errorf("no interrupted Backlot sync to abort")
+	}
+	if _, err := gitutil.RunGit(root, "rebase", "--abort"); err != nil {
+		return syncGitError("rebase --abort", root, err)
+	}
+	fmt.Fprintln(stdout, "Backlot sync aborted.")
+	return nil
+}
+
+func runSyncContinue(root string, stdout io.Writer) error {
+	state, err := detectSyncState(root)
+	if err != nil {
+		return err
+	}
+	if !state.Interrupted() {
+		return fmt.Errorf("no interrupted Backlot sync to continue")
+	}
+	if _, err := gitutil.RunGit(root, "add", "-A"); err != nil {
+		return syncGitError("staging resolved conflicts", root, err)
+	}
+	if _, err := gitutil.RunGit(root, "-c", "core.editor=true", "rebase", "--continue"); err != nil {
+		return syncGitError("rebase --continue", root, err)
+	}
+	if _, err := gitutil.RunGit(root, "push"); err != nil {
+		return syncGitError("push", root, err)
+	}
+	fmt.Fprintln(stdout, "Backlot state synced.")
+	return nil
+}
+
+type syncState struct {
+	InProgress bool
+	Conflicts  []string
+}
+
+func (s syncState) Interrupted() bool {
+	return s.InProgress || len(s.Conflicts) > 0
+}
+
 func hasUpstream(root string) bool {
 	_, err := gitutil.RunGit(root, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
 	return err == nil
@@ -165,15 +230,28 @@ func syncRebaseError(root string, err error) error {
 func syncRecoveryInstructions(root string) string {
 	return fmt.Sprintf(`Backlot sync hit a Git conflict in the private archive.
 Resolve it manually:
-  git -C %s status
   edit the conflicted files under %s
-  git -C %s add <PATH>
-  git -C %s rebase --continue
+  backlot sync --continue
 Or abort the sync:
-  git -C %s rebase --abort`, root, root, root, root, root)
+  backlot sync --abort`, root)
 }
 
 func ensureNoGitOperationInProgress(root string) error {
+	state, err := detectSyncState(root)
+	if err != nil {
+		return err
+	}
+	if state.InProgress {
+		return fmt.Errorf("Backlot root %s has an unfinished Git operation.\n\n%s", root, syncRecoveryInstructions(root))
+	}
+	if len(state.Conflicts) > 0 {
+		return fmt.Errorf("Backlot root %s has unresolved conflicts.\n\n%s", root, syncRecoveryInstructions(root))
+	}
+	return nil
+}
+
+func detectSyncState(root string) (syncState, error) {
+	state := syncState{}
 	checks := []string{
 		"MERGE_HEAD",
 		"CHERRY_PICK_HEAD",
@@ -184,22 +262,25 @@ func ensureNoGitOperationInProgress(root string) error {
 	for _, name := range checks {
 		path, err := gitutil.GitPath(root, name)
 		if err != nil {
-			return syncGitError("git state check", root, err)
+			return state, syncGitError("git state check", root, err)
 		}
 		if _, err := os.Stat(path); err == nil {
-			return fmt.Errorf("Backlot root %s has an unfinished Git operation.\n\n%s", root, syncRecoveryInstructions(root))
+			state.InProgress = true
 		} else if !errors.Is(err, os.ErrNotExist) {
-			return err
+			return state, err
 		}
 	}
 	conflicts, err := gitutil.RunGit(root, "diff", "--name-only", "--diff-filter=U")
 	if err != nil {
-		return syncGitError("conflict check", root, err)
+		return state, syncGitError("conflict check", root, err)
 	}
-	if strings.TrimSpace(conflicts) != "" {
-		return fmt.Errorf("Backlot root %s has unresolved conflicts.\n\n%s", root, syncRecoveryInstructions(root))
+	for _, line := range strings.Split(conflicts, "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			state.Conflicts = append(state.Conflicts, line)
+		}
 	}
-	return nil
+	return state, nil
 }
 
 func isNothingToCommit(err error) bool {
@@ -207,5 +288,5 @@ func isNothingToCommit(err error) bool {
 		return false
 	}
 	text := err.Error()
-	return errors.Is(err, nil) || strings.Contains(text, "nothing to commit") || strings.Contains(text, "no changes added to commit")
+	return strings.Contains(text, "nothing to commit") || strings.Contains(text, "no changes added to commit")
 }

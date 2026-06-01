@@ -1393,66 +1393,102 @@ func TestSyncConflictPrintsRecoveryAndRerunRefuses(t *testing.T) {
 		t.Skip("git not installed")
 	}
 
-	tmp := t.TempDir()
-	remote := createBacklotArchive(t, tmp)
-	stateA := filepath.Join(tmp, "state-a")
-	stateB := filepath.Join(tmp, "state-b")
-	var out, errOut bytes.Buffer
-	if code := Run([]string{"clone", remote, "--root", stateA}, &out, &errOut); code != 0 {
-		t.Fatalf("clone A exit code = %d, stderr = %s", code, errOut.String())
-	}
-	configureGitIdentity(t, stateA)
-	out.Reset()
-	errOut.Reset()
-	if code := Run([]string{"clone", remote, "--root", stateB}, &out, &errOut); code != 0 {
-		t.Fatalf("clone B exit code = %d, stderr = %s", code, errOut.String())
-	}
-	configureGitIdentity(t, stateB)
-
-	notesA := filepath.Join(stateA, "github.com", "massivemoose", "ovek", "notes.md")
-	if err := os.MkdirAll(filepath.Dir(notesA), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(notesA, []byte("from A\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	out.Reset()
-	errOut.Reset()
-	if code := Run([]string{"sync", "--root", stateA, "-m", "A update"}, &out, &errOut); code != 0 {
-		t.Fatalf("sync A exit code = %d, stderr = %s", code, errOut.String())
-	}
-
-	notesB := filepath.Join(stateB, "github.com", "massivemoose", "ovek", "notes.md")
-	if err := os.MkdirAll(filepath.Dir(notesB), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(notesB, []byte("from B\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	out.Reset()
-	errOut.Reset()
-	if code := Run([]string{"sync", "--root", stateB, "-m", "B update"}, &out, &errOut); code == 0 {
-		t.Fatalf("sync B succeeded despite conflict, stdout = %s", out.String())
-	}
+	stateB, _, errOut := createInterruptedSync(t)
 	stderr := errOut.String()
 	for _, want := range []string{
 		"Backlot sync hit a Git conflict",
-		"git -C " + stateB + " status",
-		"git -C " + stateB + " rebase --continue",
-		"git -C " + stateB + " rebase --abort",
+		"backlot sync --continue",
+		"backlot sync --abort",
 	} {
 		if !strings.Contains(stderr, want) {
 			t.Fatalf("conflict stderr missing %q:\n%s", want, stderr)
 		}
 	}
 
-	out.Reset()
+	var out bytes.Buffer
 	errOut.Reset()
 	if code := Run([]string{"sync", "--root", stateB}, &out, &errOut); code == 0 {
 		t.Fatalf("sync rerun succeeded during unfinished rebase, stdout = %s", out.String())
 	}
 	if !strings.Contains(errOut.String(), "unfinished Git operation") {
 		t.Fatalf("rerun stderr = %q, want unfinished operation guidance", errOut.String())
+	}
+}
+
+func TestSyncAbortAbortsInterruptedRebase(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+
+	state, _, _ := createInterruptedSync(t)
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"sync", "--root", state, "--abort"}, &out, &errOut); code != 0 {
+		t.Fatalf("sync --abort exit code = %d, stderr = %s", code, errOut.String())
+	}
+	if !strings.Contains(out.String(), "Backlot sync aborted.") {
+		t.Fatalf("sync --abort output = %q, want aborted message", out.String())
+	}
+	if _, err := os.Stat(filepath.Join(state, ".git", "rebase-merge")); !os.IsNotExist(err) {
+		t.Fatalf("rebase still in progress after abort: %v", err)
+	}
+	if got := runGitOutput(t, state, "status", "--short"); got != "" {
+		t.Fatalf("state status after abort = %q, want clean", got)
+	}
+}
+
+func TestSyncContinueContinuesRebaseAndPushes(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+
+	state, remote, _ := createInterruptedSync(t)
+	notes := filepath.Join(state, "github.com", "massivemoose", "ovek", "notes.md")
+	if err := os.WriteFile(notes, []byte("resolved\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"sync", "--root", state, "--continue"}, &out, &errOut); code != 0 {
+		t.Fatalf("sync --continue exit code = %d, stderr = %s", code, errOut.String())
+	}
+	if !strings.Contains(out.String(), "Backlot state synced.") {
+		t.Fatalf("sync --continue output = %q, want synced message", out.String())
+	}
+	if got := runGitOutput(t, remote, "log", "-1", "--pretty=%s"); got != "B update" {
+		t.Fatalf("remote last commit = %q, want rebased local commit", got)
+	}
+	got, err := os.ReadFile(filepath.Join(state, "github.com", "massivemoose", "ovek", "notes.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "resolved\n" {
+		t.Fatalf("resolved state file = %q, want resolved content", string(got))
+	}
+}
+
+func TestSyncContinueWithoutInterruptedSyncFailsClearly(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+
+	state := filepath.Join(t.TempDir(), "state")
+	mustRunBacklotInit(t, state)
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"sync", "--root", state, "--continue"}, &out, &errOut); code == 0 {
+		t.Fatalf("sync --continue succeeded without interrupted sync, stdout = %s", out.String())
+	}
+	if !strings.Contains(errOut.String(), "no interrupted Backlot sync") {
+		t.Fatalf("sync --continue stderr = %q, want no-interrupted-sync guidance", errOut.String())
+	}
+}
+
+func TestSyncRejectsContinueAndAbortTogether(t *testing.T) {
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"sync", "--continue", "--abort"}, &out, &errOut); code == 0 {
+		t.Fatalf("sync accepted --continue and --abort together, stdout = %s", out.String())
+	}
+	if !strings.Contains(errOut.String(), "choose only one") {
+		t.Fatalf("sync stderr = %q, want mutually exclusive guidance", errOut.String())
 	}
 }
 
@@ -1735,6 +1771,52 @@ func runGitOutput(t *testing.T, dir string, args ...string) string {
 		t.Fatal(err)
 	}
 	return out
+}
+
+func createInterruptedSync(t *testing.T) (string, string, bytes.Buffer) {
+	t.Helper()
+	tmp := t.TempDir()
+	remote := createBacklotArchive(t, tmp)
+	stateA := filepath.Join(tmp, "state-a")
+	stateB := filepath.Join(tmp, "state-b")
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"clone", remote, "--root", stateA}, &out, &errOut); code != 0 {
+		t.Fatalf("clone A exit code = %d, stderr = %s", code, errOut.String())
+	}
+	configureGitIdentity(t, stateA)
+	out.Reset()
+	errOut.Reset()
+	if code := Run([]string{"clone", remote, "--root", stateB}, &out, &errOut); code != 0 {
+		t.Fatalf("clone B exit code = %d, stderr = %s", code, errOut.String())
+	}
+	configureGitIdentity(t, stateB)
+
+	notesA := filepath.Join(stateA, "github.com", "massivemoose", "ovek", "notes.md")
+	if err := os.MkdirAll(filepath.Dir(notesA), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(notesA, []byte("from A\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	errOut.Reset()
+	if code := Run([]string{"sync", "--root", stateA, "-m", "A update"}, &out, &errOut); code != 0 {
+		t.Fatalf("sync A exit code = %d, stderr = %s", code, errOut.String())
+	}
+
+	notesB := filepath.Join(stateB, "github.com", "massivemoose", "ovek", "notes.md")
+	if err := os.MkdirAll(filepath.Dir(notesB), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(notesB, []byte("from B\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	errOut.Reset()
+	if code := Run([]string{"sync", "--root", stateB, "-m", "B update"}, &out, &errOut); code == 0 {
+		t.Fatalf("sync B succeeded despite conflict, stdout = %s", out.String())
+	}
+	return stateB, remote, errOut
 }
 
 func countExcludeLine(text, want string) int {
