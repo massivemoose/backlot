@@ -68,6 +68,8 @@ go build -o backlot .
 
 ## Quickstart
 
+![Backlot terminal demo showing a private note staying out of public Git and syncing cleanly](docs/demo/backlot-happy-path.gif)
+
 Start from an existing project repo that has an `origin` remote:
 
 ```sh
