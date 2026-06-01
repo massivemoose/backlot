@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/massivemoose/backlot/internal/gitutil"
@@ -228,12 +229,79 @@ func syncRebaseError(root string, err error) error {
 }
 
 func syncRecoveryInstructions(root string) string {
-	return fmt.Sprintf(`Backlot sync hit a Git conflict in the private archive.
-Resolve it manually:
-  edit the conflicted files under %s
-  backlot sync --continue
-Or abort the sync:
-  backlot sync --abort`, root)
+	var b strings.Builder
+	b.WriteString("Backlot sync hit a Git conflict in the private archive.\n")
+	targets := recoveryEditTargets(root)
+	if len(targets) > 0 {
+		b.WriteString("Resolve the conflicted files:\n")
+		for _, target := range targets {
+			fmt.Fprintf(&b, "  edit %s\n", target)
+		}
+	} else {
+		fmt.Fprintf(&b, "Resolve it manually:\n  edit the conflicted files under %s\n", root)
+	}
+	b.WriteString("Then run:\n  backlot sync --continue\n")
+	b.WriteString("Or abort the sync:\n  backlot sync --abort")
+	return b.String()
+}
+
+func recoveryEditTargets(root string) []string {
+	state, err := detectSyncState(root)
+	if err != nil || len(state.Conflicts) == 0 {
+		return nil
+	}
+	stateDir, ok := currentAttachedProjectStateDir(root)
+	if !ok {
+		return nil
+	}
+	var targets []string
+	for _, conflict := range state.Conflicts {
+		if target, ok := projectFacingConflictPath(root, stateDir, conflict); ok {
+			targets = append(targets, target)
+		}
+	}
+	return targets
+}
+
+func currentAttachedProjectStateDir(root string) (string, bool) {
+	current, err := cwd()
+	if err != nil {
+		return "", false
+	}
+	repoRoot, err := gitutil.RepoRoot(current)
+	if err != nil {
+		return "", false
+	}
+	origin, err := gitutil.OriginURL(repoRoot)
+	if err != nil {
+		return "", false
+	}
+	key, err := gitutil.NormalizeOrigin(origin)
+	if err != nil {
+		return "", false
+	}
+	stateDir := paths.ProjectStateDir(root, key)
+	linkTarget, err := filepath.EvalSymlinks(filepath.Join(repoRoot, ".backlot"))
+	if err != nil {
+		return "", false
+	}
+	stateTarget, err := filepath.EvalSymlinks(stateDir)
+	if err != nil {
+		return "", false
+	}
+	if linkTarget != stateTarget {
+		return "", false
+	}
+	return stateDir, true
+}
+
+func projectFacingConflictPath(root, stateDir, conflict string) (string, bool) {
+	fullPath := filepath.Join(root, filepath.FromSlash(conflict))
+	rel, err := filepath.Rel(stateDir, fullPath)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", false
+	}
+	return filepath.ToSlash(filepath.Join(".backlot", rel)), true
 }
 
 func ensureNoGitOperationInProgress(root string) error {

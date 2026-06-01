@@ -1415,6 +1415,40 @@ func TestSyncConflictPrintsRecoveryAndRerunRefuses(t *testing.T) {
 	}
 }
 
+func TestSyncConflictShowsProjectFriendlyRecoveryPath(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink behavior differs on Windows")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+
+	_, _, errOut := createAttachedInterruptedSync(t)
+	stderr := errOut.String()
+	if !strings.Contains(stderr, "edit .backlot/notes.md") {
+		t.Fatalf("conflict stderr = %q, want project-friendly .backlot path", stderr)
+	}
+	recovery := stderr[strings.Index(stderr, "Backlot sync hit a Git conflict"):]
+	if strings.Contains(recovery, "git -C ") {
+		t.Fatalf("recovery instructions include raw git command:\n%s", recovery)
+	}
+}
+
+func TestSyncConflictOutsideAttachedProjectShowsArchiveFallback(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+
+	state, _, errOut := createInterruptedSync(t)
+	stderr := errOut.String()
+	if !strings.Contains(stderr, "edit the conflicted files under "+state) {
+		t.Fatalf("conflict stderr = %q, want archive-root fallback", stderr)
+	}
+	if strings.Contains(stderr, "edit .backlot/notes.md") {
+		t.Fatalf("conflict stderr unexpectedly used project path outside attached project:\n%s", stderr)
+	}
+}
+
 func TestSyncAbortAbortsInterruptedRebase(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not installed")
@@ -1817,6 +1851,61 @@ func createInterruptedSync(t *testing.T) (string, string, bytes.Buffer) {
 		t.Fatalf("sync B succeeded despite conflict, stdout = %s", out.String())
 	}
 	return stateB, remote, errOut
+}
+
+func createAttachedInterruptedSync(t *testing.T) (string, string, bytes.Buffer) {
+	t.Helper()
+	tmp := t.TempDir()
+	remote := createBacklotArchive(t, tmp)
+	stateA := filepath.Join(tmp, "state-a")
+	stateB := filepath.Join(tmp, "state-b")
+	public := filepath.Join(tmp, "public")
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"clone", remote, "--root", stateA}, &out, &errOut); code != 0 {
+		t.Fatalf("clone A exit code = %d, stderr = %s", code, errOut.String())
+	}
+	configureGitIdentity(t, stateA)
+	out.Reset()
+	errOut.Reset()
+	if code := Run([]string{"clone", remote, "--root", stateB}, &out, &errOut); code != 0 {
+		t.Fatalf("clone B exit code = %d, stderr = %s", code, errOut.String())
+	}
+	configureGitIdentity(t, stateB)
+	mustRunGit(t, tmp, "init", public)
+	mustRunGit(t, public, "remote", "add", "origin", "git@github.com:massivemoose/ovek.git")
+	withChdir(t, public, func() {
+		out.Reset()
+		errOut.Reset()
+		if code := Run([]string{"attach", "--root", stateB}, &out, &errOut); code != 0 {
+			t.Fatalf("attach exit code = %d, stderr = %s", code, errOut.String())
+		}
+	})
+
+	notesA := filepath.Join(stateA, "github.com", "massivemoose", "ovek", "notes.md")
+	if err := os.MkdirAll(filepath.Dir(notesA), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(notesA, []byte("from A\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	errOut.Reset()
+	if code := Run([]string{"sync", "--root", stateA, "-m", "A update"}, &out, &errOut); code != 0 {
+		t.Fatalf("sync A exit code = %d, stderr = %s", code, errOut.String())
+	}
+
+	notesB := filepath.Join(public, ".backlot", "notes.md")
+	if err := os.WriteFile(notesB, []byte("from B\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	withChdir(t, public, func() {
+		out.Reset()
+		errOut.Reset()
+		if code := Run([]string{"sync", "--root", stateB, "-m", "B update"}, &out, &errOut); code == 0 {
+			t.Fatalf("sync B succeeded despite conflict, stdout = %s", out.String())
+		}
+	})
+	return stateB, public, errOut
 }
 
 func countExcludeLine(text, want string) int {
