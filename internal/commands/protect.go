@@ -46,8 +46,9 @@ func runProtect(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 	if _, err := os.Stat(hookPath); err == nil {
-		fmt.Fprintln(stdout, "A pre-commit hook already exists; leaving it unchanged.")
-		fmt.Fprintln(stdout, "To add the Backlot guard manually, include:")
+		fmt.Fprintf(stdout, "A pre-commit hook already exists at %s.\n", hookPath)
+		fmt.Fprintln(stdout, "Backlot did not overwrite it.")
+		fmt.Fprintln(stdout, "To add the Backlot guard, append this script to the existing hook or add the equivalent check to your hook manager:")
 		fmt.Fprint(stdout, preCommitHook)
 		return nil
 	} else if !os.IsNotExist(err) {

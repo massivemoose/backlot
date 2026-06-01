@@ -1127,8 +1127,15 @@ func TestProtectCreatesButDoesNotOverwriteHook(t *testing.T) {
 		if code := Run([]string{"protect"}, &out, &errOut); code != 0 {
 			t.Fatalf("second protect exit code = %d, stderr = %s", code, errOut.String())
 		}
-		if !strings.Contains(out.String(), "already exists") {
-			t.Fatalf("second protect output = %q, want already exists message", out.String())
+		text := out.String()
+		for _, want := range []string{
+			"Backlot did not overwrite it",
+			"append this script to the existing hook",
+			"hook manager",
+		} {
+			if !strings.Contains(text, want) {
+				t.Fatalf("second protect output missing %q:\n%s", want, text)
+			}
 		}
 	})
 	data, err = os.ReadFile(hook)
