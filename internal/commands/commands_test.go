@@ -16,6 +16,7 @@ func TestHelpExitsSuccessfully(t *testing.T) {
 	tests := [][]string{
 		{"--help"},
 		{"-h"},
+		{"help"},
 		{"init", "--help"},
 	}
 
@@ -23,6 +24,47 @@ func TestHelpExitsSuccessfully(t *testing.T) {
 		var out, errOut bytes.Buffer
 		if code := Run(args, &out, &errOut); code != 0 {
 			t.Fatalf("Run(%v) exit code = %d, stderr = %s", args, code, errOut.String())
+		}
+	}
+}
+
+func TestHelpCommandPrintsUsage(t *testing.T) {
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"help"}, &out, &errOut); code != 0 {
+		t.Fatalf("help exit code = %d, stderr = %s", code, errOut.String())
+	}
+	text := out.String()
+	for _, want := range []string{
+		"Usage: backlot <command> [options]",
+		"help     show this help",
+		"init",
+		"sync",
+		"doctor",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("help output missing %q:\n%s", want, text)
+		}
+	}
+	if errOut.Len() > 0 {
+		t.Fatalf("help printed to stderr:\n%s", errOut.String())
+	}
+}
+
+func TestHelpCommandRejectsExtraArgsClearly(t *testing.T) {
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"help", "sync"}, &out, &errOut); code == 0 {
+		t.Fatalf("help with extra args exited 0, stdout = %s", out.String())
+	}
+	if out.Len() > 0 {
+		t.Fatalf("help with extra args printed stdout:\n%s", out.String())
+	}
+	text := errOut.String()
+	for _, want := range []string{
+		"backlot help does not accept arguments",
+		"backlot <command> --help",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("help with extra args stderr missing %q:\n%s", want, text)
 		}
 	}
 }

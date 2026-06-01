@@ -223,6 +223,7 @@ The structure is yours. Backlot only provides the private place to keep it.
 ## Commands
 
 ```sh
+backlot help
 backlot init [--root PATH] [--remote URL]
 backlot clone <archive-url> [--root PATH]
 backlot attach [--root PATH]
@@ -236,6 +237,7 @@ backlot doctor [--root PATH]
 backlot version
 ```
 
+- `help` shows this help.
 - `init` creates or configures the local Backlot archive.
 - `clone` clones an existing Backlot archive on a new machine.
 - `attach` creates `.backlot` for the current repo.
