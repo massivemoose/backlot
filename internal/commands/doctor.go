@@ -75,6 +75,11 @@ func runDoctor(args []string, stdout, stderr io.Writer) error {
 		}
 		if gitutil.IsGitRepoRoot(root) {
 			pass(stdout, "Backlot root is a Git repo")
+			if origin, err := gitutil.OriginURL(root); err == nil {
+				info(stdout, fmt.Sprintf("Backlot archive origin: %s", origin))
+			} else {
+				info(stdout, "Backlot archive origin: local-only (no origin)")
+			}
 		} else {
 			failCheck("Backlot root is a Git repo")
 		}
@@ -135,4 +140,8 @@ func pass(w io.Writer, text string) {
 
 func fail(w io.Writer, text string) {
 	fmt.Fprintf(w, "✗ %s\n", text)
+}
+
+func info(w io.Writer, text string) {
+	fmt.Fprintf(w, "• %s\n", text)
 }

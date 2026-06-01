@@ -1771,6 +1771,66 @@ func TestDoctorReportsHealthyAttachedRepo(t *testing.T) {
 	})
 }
 
+func TestDoctorReportsArchiveOrigin(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+
+	tmp := t.TempDir()
+	state := filepath.Join(tmp, "state")
+	public := filepath.Join(tmp, "public")
+	remote := "git@example.com:you/archive.git"
+	mustRunBacklotInit(t, state)
+	mustRunGit(t, state, "remote", "add", "origin", remote)
+	mustRunGit(t, tmp, "init", public)
+	mustRunGit(t, public, "remote", "add", "origin", "git@github.com:massivemoose/ovek.git")
+
+	withChdir(t, public, func() {
+		var out, errOut bytes.Buffer
+		if code := Run([]string{"attach", "--root", state}, &out, &errOut); code != 0 {
+			t.Fatalf("attach failed: %s", errOut.String())
+		}
+		out.Reset()
+		errOut.Reset()
+		if code := Run([]string{"doctor", "--root", state}, &out, &errOut); code != 0 {
+			t.Fatalf("doctor exit code = %d, stderr = %s", code, errOut.String())
+		}
+		want := "• Backlot archive origin: " + remote
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("doctor output missing archive origin:\n%s", out.String())
+		}
+	})
+}
+
+func TestDoctorReportsLocalOnlyArchive(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+
+	tmp := t.TempDir()
+	state := filepath.Join(tmp, "state")
+	public := filepath.Join(tmp, "public")
+	mustRunBacklotInit(t, state)
+	mustRunGit(t, tmp, "init", public)
+	mustRunGit(t, public, "remote", "add", "origin", "git@github.com:massivemoose/ovek.git")
+
+	withChdir(t, public, func() {
+		var out, errOut bytes.Buffer
+		if code := Run([]string{"attach", "--root", state}, &out, &errOut); code != 0 {
+			t.Fatalf("attach failed: %s", errOut.String())
+		}
+		out.Reset()
+		errOut.Reset()
+		if code := Run([]string{"doctor", "--root", state}, &out, &errOut); code != 0 {
+			t.Fatalf("doctor exit code = %d, stderr = %s", code, errOut.String())
+		}
+		want := "• Backlot archive origin: local-only (no origin)"
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("doctor output missing local-only origin message:\n%s", out.String())
+		}
+	})
+}
+
 func TestDoctorReturnsNonzeroForBrokenSetup(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not installed")
