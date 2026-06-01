@@ -74,7 +74,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  attach   [--root PATH]")
 	fmt.Fprintln(w, "  detach   [--root PATH]")
 	fmt.Fprintln(w, "  status   [--root PATH]")
-	fmt.Fprintln(w, "  sync     [--root PATH] [-m MESSAGE]")
+	fmt.Fprintln(w, "  sync     [--root PATH] [-m MESSAGE|--continue|--abort]")
 	fmt.Fprintln(w, "  protect")
 	fmt.Fprintln(w, "  doctor   [--root PATH]")
 	fmt.Fprintln(w, "  version")

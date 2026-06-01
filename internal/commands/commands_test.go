@@ -37,6 +37,24 @@ func TestHelpDoesNotAdvertiseCustomLinkName(t *testing.T) {
 	}
 }
 
+func TestSyncHelpIncludesRecoveryFlags(t *testing.T) {
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"sync", "--help"}, &out, &errOut); code != 0 {
+		t.Fatalf("sync help exit code = %d, stderr = %s", code, errOut.String())
+	}
+	text := out.String() + errOut.String()
+	for _, want := range []string{
+		"backlot sync [--root PATH] --continue",
+		"backlot sync [--root PATH] --abort",
+		"Continue after resolving a conflict:",
+		"backlot sync --continue",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("sync help missing %q:\n%s", want, text)
+		}
+	}
+}
+
 func TestAttachRejectsCustomLinkName(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not installed")

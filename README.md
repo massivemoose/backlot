@@ -114,9 +114,22 @@ backlot sync
 ```
 
 If two machines edit the same private file, Git may report a conflict. Backlot
-will stop and print the exact `git -C ~/.backlot ...` commands to inspect,
-continue, or abort the rebase. Conflict resolution is manual for now so Backlot
-does not guess which private notes to keep.
+will stop and point at the conflicted files through your project link, such as
+`.backlot/notes.md`. Resolve the conflict in `.backlot/`, then run:
+
+```sh
+backlot sync --continue
+```
+
+To abandon the interrupted sync and return the archive to its previous state,
+run:
+
+```sh
+backlot sync --abort
+```
+
+Conflict resolution is manual for now so Backlot does not guess which private
+notes to keep.
 
 ## How It Works
 
@@ -216,6 +229,8 @@ backlot attach [--root PATH]
 backlot detach [--root PATH]
 backlot status [--root PATH]
 backlot sync [--root PATH] [-m MESSAGE]
+backlot sync [--root PATH] --continue
+backlot sync [--root PATH] --abort
 backlot protect
 backlot doctor [--root PATH]
 backlot version
@@ -226,7 +241,8 @@ backlot version
 - `attach` creates `.backlot` for the current repo.
 - `detach` removes the current repo's Backlot symlink and local exclude entries.
 - `status` shows the current repo's Backlot state.
-- `sync` pulls, commits, rebases, and pushes the private archive.
+- `sync` pulls, commits, rebases, and pushes the private archive; `--continue`
+  and `--abort` recover interrupted rebase conflicts.
 - `protect` installs a local pre-commit guard for `.backlot`.
 - `doctor` diagnoses setup issues.
 - `version` prints build metadata.

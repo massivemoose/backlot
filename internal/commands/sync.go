@@ -18,10 +18,16 @@ func runSync(args []string, stdout, stderr io.Writer) error {
 	fs.Usage = func() {
 		fmt.Fprintln(stderr, "Usage:")
 		fmt.Fprintln(stderr, "  backlot sync [--root PATH] [-m MESSAGE]")
+		fmt.Fprintln(stderr, "  backlot sync [--root PATH] --continue")
+		fmt.Fprintln(stderr, "  backlot sync [--root PATH] --abort")
 		fmt.Fprintln(stderr)
 		fmt.Fprintln(stderr, "Examples:")
 		fmt.Fprintln(stderr, "  backlot sync")
 		fmt.Fprintln(stderr, "  backlot sync -m \"Update private notes\"")
+		fmt.Fprintln(stderr, "  # Continue after resolving a conflict:")
+		fmt.Fprintln(stderr, "  backlot sync --continue")
+		fmt.Fprintln(stderr, "  # Abort an interrupted sync:")
+		fmt.Fprintln(stderr, "  backlot sync --abort")
 	}
 	rootFlag := fs.String("root", "", "Backlot root path")
 	message := fs.String("m", "Update backlot state", "commit message")
