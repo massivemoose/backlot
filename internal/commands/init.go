@@ -19,6 +19,14 @@ Private Backlot workspace state.
 
 func runInit(args []string, stdout, stderr io.Writer) error {
 	fs := newFlagSet("init", stderr)
+	fs.Usage = func() {
+		fmt.Fprintln(stderr, "Usage:")
+		fmt.Fprintln(stderr, "  backlot init [--root PATH] [--remote URL]")
+		fmt.Fprintln(stderr)
+		fmt.Fprintln(stderr, "Examples:")
+		fmt.Fprintln(stderr, "  backlot init")
+		fmt.Fprintln(stderr, "  backlot init --remote git@github.com:you/backlot-archive.git")
+	}
 	rootFlag := fs.String("root", "", "Backlot root path")
 	remoteFlag := fs.String("remote", "", "origin remote URL")
 	if err := fs.Parse(args); err != nil {
@@ -32,6 +40,9 @@ func runInit(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
+	if err := ensureRootOutsideCurrentProject(root); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return err
 	}
@@ -41,7 +52,13 @@ func runInit(args []string, stdout, stderr io.Writer) error {
 		}
 		fmt.Fprintf(stdout, "Initialized Backlot state repo at %s\n", root)
 	} else {
+		if !isBacklotArchiveRoot(root) {
+			return fmt.Errorf("Backlot root %s is not a Backlot archive; move it aside or choose another root with --root", root)
+		}
 		fmt.Fprintf(stdout, "Backlot state repo already initialized at %s\n", root)
+	}
+	if err := ensureArchiveMarker(root); err != nil {
+		return err
 	}
 
 	readmePath := filepath.Join(root, "README.md")

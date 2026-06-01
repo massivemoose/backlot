@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -16,6 +17,7 @@ func RunGit(dir string, args ...string) (string, error) {
 	}
 	allArgs = append(allArgs, args...)
 	cmd := exec.Command("git", allArgs...)
+	cmd.Env = sanitizedGitEnv(os.Environ())
 	output, err := cmd.CombinedOutput()
 	text := strings.TrimSpace(string(output))
 	if err != nil {
@@ -25,6 +27,28 @@ func RunGit(dir string, args ...string) (string, error) {
 		return "", fmt.Errorf("git %s: %w: %s", strings.Join(allArgs, " "), err, text)
 	}
 	return text, nil
+}
+
+func sanitizedGitEnv(env []string) []string {
+	blocked := map[string]bool{
+		"GIT_ALTERNATE_OBJECT_DIRECTORIES": true,
+		"GIT_COMMON_DIR":                   true,
+		"GIT_DIR":                          true,
+		"GIT_INDEX_FILE":                   true,
+		"GIT_OBJECT_DIRECTORY":             true,
+		"GIT_PREFIX":                       true,
+		"GIT_QUARANTINE_PATH":              true,
+		"GIT_WORK_TREE":                    true,
+	}
+	cleaned := make([]string, 0, len(env))
+	for _, item := range env {
+		key, _, ok := strings.Cut(item, "=")
+		if ok && blocked[key] {
+			continue
+		}
+		cleaned = append(cleaned, item)
+	}
+	return cleaned
 }
 
 func RepoRoot(cwd string) (string, error) {
@@ -154,5 +178,25 @@ func normalizeHostPath(host, path string) (string, error) {
 	if host == "" || path == "" || !strings.Contains(path, "/") {
 		return "", fmt.Errorf("remote does not include host and owner/repo path")
 	}
+	for _, segment := range strings.Split(path, "/") {
+		if err := validateRemotePathSegment(segment); err != nil {
+			return "", err
+		}
+	}
 	return host + "/" + path, nil
+}
+
+func validateRemotePathSegment(segment string) error {
+	if segment == "" || segment == "." || segment == ".." {
+		return fmt.Errorf("remote contains unsafe path segment %q", segment)
+	}
+	if strings.ContainsAny(segment, `\:*?"<>|`) {
+		return fmt.Errorf("remote contains unsafe path segment %q", segment)
+	}
+	for _, r := range segment {
+		if r < 0x20 || r == 0x7f {
+			return fmt.Errorf("remote contains unsafe path segment %q", segment)
+		}
+	}
+	return nil
 }

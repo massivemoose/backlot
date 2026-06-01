@@ -14,6 +14,13 @@ import (
 
 func runStatus(args []string, stdout, stderr io.Writer) error {
 	fs := newFlagSet("status", stderr)
+	fs.Usage = func() {
+		fmt.Fprintln(stderr, "Usage:")
+		fmt.Fprintln(stderr, "  backlot status [--root PATH]")
+		fmt.Fprintln(stderr)
+		fmt.Fprintln(stderr, "Example:")
+		fmt.Fprintln(stderr, "  backlot status")
+	}
 	rootFlag := fs.String("root", "", "Backlot root path")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -41,6 +48,9 @@ func runStatus(args []string, stdout, stderr io.Writer) error {
 	fmt.Fprintf(stdout, "Link:          %s\n", info.LinkDescription)
 	fmt.Fprintf(stdout, "Excluded:      %s\n", excluded)
 	fmt.Fprintf(stdout, "State repo:    %s\n", info.StateRepo)
+	if info.Recovery != "" {
+		fmt.Fprintf(stdout, "Recovery:      %s\n", info.Recovery)
+	}
 	return nil
 }
 
@@ -54,6 +64,7 @@ type projectInfo struct {
 	LinkDescription string
 	Excluded        bool
 	StateRepo       string
+	Recovery        string
 }
 
 func collectProjectInfo(rootFlag string) (projectInfo, error) {
@@ -72,6 +83,12 @@ func collectProjectInfo(rootFlag string) (projectInfo, error) {
 	if err != nil {
 		return info, err
 	}
+	if err := ensureRootOutsideProject(info.BacklotRoot, info.RepoRoot); err != nil {
+		return info, err
+	}
+	if err := requireBacklotArchiveRoot(info.BacklotRoot); err != nil {
+		return info, err
+	}
 	info.Origin, err = gitutil.OriginURL(info.RepoRoot)
 	if err != nil {
 		return info, err
@@ -84,6 +101,9 @@ func collectProjectInfo(rootFlag string) (projectInfo, error) {
 	info.LinkDescription = paths.LinkDescription(filepath.Join(info.RepoRoot, ".backlot"), info.StateDir)
 	info.Excluded, _ = paths.ExcludeContains(info.RepoRoot, ".backlot")
 	info.StateRepo = stateRepoStatus(info.BacklotRoot)
+	if info.StateRepo == "sync interrupted" {
+		info.Recovery = syncRecoverySummary()
+	}
 	return info, nil
 }
 
@@ -94,6 +114,13 @@ func stateRepoStatus(root string) string {
 	if !gitutil.IsGitRepoRoot(root) {
 		return "not initialized"
 	}
+	state, err := detectSyncState(root)
+	if err != nil {
+		return "error"
+	}
+	if state.Interrupted() {
+		return "sync interrupted"
+	}
 	status, err := gitutil.RunGit(root, "status", "--short")
 	if err != nil {
 		return "error"
@@ -102,4 +129,8 @@ func stateRepoStatus(root string) string {
 		return "clean"
 	}
 	return "dirty"
+}
+
+func syncRecoverySummary() string {
+	return "resolve conflicts in .backlot/ and run backlot sync --continue"
 }

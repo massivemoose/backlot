@@ -33,6 +33,9 @@ func ValidateLinkName(linkName string) error {
 	if linkName == "" {
 		return errors.New("link name cannot be empty")
 	}
+	if linkName != ".backlot" {
+		return errors.New("custom link names are not supported yet; use .backlot")
+	}
 	if filepath.IsAbs(linkName) {
 		return errors.New("link name must be relative")
 	}
@@ -157,7 +160,7 @@ func EnsureManagedSymlink(linkPath, target string) error {
 		return err
 	}
 	if info.Mode()&os.ModeSymlink == 0 {
-		return fmt.Errorf("%s already exists and is not managed by Backlot.\nMove it or choose another link name with --link-name.", filepath.Base(linkPath))
+		return fmt.Errorf("%s already exists and is not managed by Backlot.\nMove it before running backlot attach.", filepath.Base(linkPath))
 	}
 
 	current, err := os.Readlink(linkPath)
@@ -170,7 +173,7 @@ func EnsureManagedSymlink(linkPath, target string) error {
 	}
 	currentAbs = filepath.Clean(currentAbs)
 	if currentAbs != filepath.Clean(target) {
-		return fmt.Errorf("%s already exists and is not managed by Backlot.\nMove it or choose another link name with --link-name.", filepath.Base(linkPath))
+		return fmt.Errorf("%s already exists and is not managed by Backlot.\nMove it before running backlot attach.", filepath.Base(linkPath))
 	}
 	return nil
 }

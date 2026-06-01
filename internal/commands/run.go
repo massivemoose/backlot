@@ -37,6 +37,7 @@ func RunWithBuildInfo(args []string, stdout, stderr io.Writer, build BuildInfo) 
 	}
 
 	commands := map[string]commandFunc{
+		"help":    runHelp,
 		"init":    runInit,
 		"clone":   runClone,
 		"attach":  runAttach,
@@ -65,16 +66,25 @@ func RunWithBuildInfo(args []string, stdout, stderr io.Writer, build BuildInfo) 
 	return 0
 }
 
+func runHelp(args []string, stdout, stderr io.Writer) error {
+	if len(args) > 0 {
+		return fmt.Errorf("backlot help does not accept arguments; use 'backlot <command> --help' for command help")
+	}
+	printUsage(stdout)
+	return nil
+}
+
 func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "Usage: backlot <command> [options]")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Commands:")
+	fmt.Fprintln(w, "  help     show this help")
 	fmt.Fprintln(w, "  init     [--root PATH] [--remote URL]")
 	fmt.Fprintln(w, "  clone    <archive-url> [--root PATH]")
-	fmt.Fprintln(w, "  attach   [--root PATH] [--link-name .backlot]")
+	fmt.Fprintln(w, "  attach   [--root PATH]")
 	fmt.Fprintln(w, "  detach   [--root PATH]")
 	fmt.Fprintln(w, "  status   [--root PATH]")
-	fmt.Fprintln(w, "  sync     [--root PATH] [-m MESSAGE]")
+	fmt.Fprintln(w, "  sync     [--root PATH] [-m MESSAGE|--continue|--abort]")
 	fmt.Fprintln(w, "  protect")
 	fmt.Fprintln(w, "  doctor   [--root PATH]")
 	fmt.Fprintln(w, "  version")

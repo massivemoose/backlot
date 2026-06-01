@@ -34,6 +34,9 @@ func runClone(args []string, stdout, stderr io.Writer) error {
 	if !gitutil.IsGitRepoRoot(root) {
 		return fmt.Errorf("cloned Backlot root %s is not a Git repository", root)
 	}
+	if !isBacklotArchiveRoot(root) {
+		return fmt.Errorf("cloned Backlot root %s is not a Backlot archive", root)
+	}
 	origin, err := gitutil.OriginURL(root)
 	if err != nil {
 		return err
