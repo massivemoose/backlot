@@ -222,10 +222,26 @@ One simple layout:
 
 The structure is yours. Backlot only provides the private place to keep it.
 
+### Agent Sandboxes
+
+Backlot uses a `.backlot` symlink that points into your private Backlot archive,
+usually under `~/.backlot`. Some coding agents enforce filesystem permissions
+on the resolved symlink target, so `AGENTS.md` or `CLAUDE.md` can tell the
+agent to use `.backlot/` but cannot grant access by itself.
+
+If an agent asks for permission when reading or editing `.backlot/`, configure
+that agent to trust your Backlot archive root. See [Using Backlot With Coding
+Agents](docs/agents.md), or run:
+
+```sh
+backlot agents setup
+```
+
 ## Commands
 
 ```sh
 backlot help
+backlot agents setup [--root PATH] [--tool codex|claude] [--apply]
 backlot init [--root PATH] [--remote URL]
 backlot clone <archive-url> [--root PATH]
 backlot attach [--root PATH]
@@ -240,6 +256,7 @@ backlot version
 ```
 
 - `help` shows this help.
+- `agents setup` previews or applies coding-agent sandbox configuration.
 - `init` creates or configures the local Backlot archive.
 - `clone` clones an existing Backlot archive on a new machine.
 - `attach` creates `.backlot` for the current repo.
