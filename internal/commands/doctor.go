@@ -99,6 +99,10 @@ func runDoctor(args []string, stdout, stderr io.Writer) error {
 		failCheck("Backlot root is a Git repo")
 		failCheck("Backlot root is a Backlot archive")
 	}
+	if rootErr == nil {
+		info(stdout, fmt.Sprintf("Backlot root: %s", root))
+		info(stdout, "Agent setup: see docs/agents.md or run backlot agents setup")
+	}
 
 	if root != "" && projectKey != "" {
 		stateDir = paths.ProjectStateDir(root, projectKey)
