@@ -38,6 +38,7 @@ func RunWithBuildInfo(args []string, stdout, stderr io.Writer, build BuildInfo) 
 
 	commands := map[string]commandFunc{
 		"help":    runHelp,
+		"agents":  runAgents,
 		"init":    runInit,
 		"clone":   runClone,
 		"attach":  runAttach,
@@ -79,6 +80,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Commands:")
 	fmt.Fprintln(w, "  help     show this help")
+	fmt.Fprintln(w, "  agents   setup [--root PATH] [--tool codex|claude] [--apply]")
 	fmt.Fprintln(w, "  init     [--root PATH] [--remote URL]")
 	fmt.Fprintln(w, "  clone    <archive-url> [--root PATH]")
 	fmt.Fprintln(w, "  attach   [--root PATH]")
