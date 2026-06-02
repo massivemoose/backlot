@@ -12,7 +12,7 @@ import (
 	"github.com/massivemoose/backlot/internal/paths"
 )
 
-const agentSetupDocsURL = "https://github.com/massivemoose/backlot/tree/main/docs/agents.md"
+const agentSetupDocsURL = "https://github.com/massivemoose/backlot/blob/main/docs/agents.md"
 
 func runDoctor(args []string, stdout, stderr io.Writer) error {
 	fs := newFlagSet("doctor", stderr)
