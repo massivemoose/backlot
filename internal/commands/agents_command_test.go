@@ -67,7 +67,7 @@ func TestDoctorPrintsAgentSetupHintWithoutFailing(t *testing.T) {
 		text := out.String()
 		for _, want := range []string{
 			"Backlot root: " + state,
-			"Agent setup: see docs/agents.md or run backlot agents setup",
+			"Agent setup: see https://github.com/massivemoose/backlot/tree/main/docs/agents.md or run backlot agents setup",
 		} {
 			if !strings.Contains(text, want) {
 				t.Fatalf("doctor output missing %q:\n%s", want, text)

@@ -106,6 +106,44 @@ func TestCodexApplyConfigCreatesBackupAndAvoidsDuplicateRoots(t *testing.T) {
 	}
 }
 
+func TestCodexApplyConfigIgnoresPathOutsideWritableRoots(t *testing.T) {
+	agent, ok := ByID("codex")
+	if !ok {
+		t.Fatal("codex agent missing")
+	}
+	home := t.TempDir()
+	configDir := filepath.Join(home, ".codex")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(configDir, "config.toml")
+	original := "notes = \"try /state later\"\n# writable_roots = [\"/state\"]\n[sandbox_workspace_write]\nwritable_roots_note = \"/state\"\n"
+	if err := os.WriteFile(configPath, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	status := agent.ConfigStatus(Environment{HomeDir: home}, "/state")
+	if status.HasGrant {
+		t.Fatal("ConfigStatus() HasGrant = true, want false when path appears outside writable_roots")
+	}
+
+	result, err := agent.ApplyConfig(Environment{HomeDir: home}, "/state", time.Date(2026, 6, 2, 12, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("ApplyConfig() error = %v", err)
+	}
+	if !result.Changed {
+		t.Fatal("ApplyConfig() Changed = false, want true")
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if !strings.Contains(text, `[sandbox_workspace_write]`) || !strings.Contains(text, `writable_roots = ["/state"]`) {
+		t.Fatalf("config missing applied writable root:\n%s", text)
+	}
+}
+
 func TestApplyConfigRefusesBroadRoots(t *testing.T) {
 	home := t.TempDir()
 	env := Environment{HomeDir: home}

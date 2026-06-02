@@ -12,6 +12,8 @@ import (
 	"github.com/massivemoose/backlot/internal/paths"
 )
 
+const agentSetupDocsURL = "https://github.com/massivemoose/backlot/tree/main/docs/agents.md"
+
 func runDoctor(args []string, stdout, stderr io.Writer) error {
 	fs := newFlagSet("doctor", stderr)
 	fs.Usage = func() {
@@ -101,7 +103,7 @@ func runDoctor(args []string, stdout, stderr io.Writer) error {
 	}
 	if rootErr == nil {
 		info(stdout, fmt.Sprintf("Backlot root: %s", root))
-		info(stdout, "Agent setup: see docs/agents.md or run backlot agents setup")
+		info(stdout, fmt.Sprintf("Agent setup: see %s or run backlot agents setup", agentSetupDocsURL))
 	}
 
 	if root != "" && projectKey != "" {

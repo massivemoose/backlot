@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -39,7 +40,7 @@ func (codexAgent) ConfigStatus(env Environment, backlotRoot string) ConfigStatus
 	return ConfigStatus{
 		ConfigPath: path,
 		Exists:     true,
-		HasGrant:   strings.Contains(string(data), fmt.Sprintf("%q", backlotRoot)),
+		HasGrant:   codexConfigHasWritableRoot(string(data), backlotRoot),
 		Message:    "config found",
 	}
 }
@@ -84,7 +85,7 @@ func codexConfigPath(env Environment) string {
 
 func updateCodexConfig(text, backlotRoot string) (string, bool, error) {
 	quoted := fmt.Sprintf("%q", backlotRoot)
-	if strings.Contains(text, quoted) {
+	if codexConfigHasWritableRoot(text, backlotRoot) {
 		return text, false, nil
 	}
 	if strings.TrimSpace(text) == "" {
@@ -92,19 +93,7 @@ func updateCodexConfig(text, backlotRoot string) (string, bool, error) {
 	}
 
 	lines := strings.SplitAfter(text, "\n")
-	tableStart := -1
-	tableEnd := len(lines)
-	for i, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "[sandbox_workspace_write]" {
-			tableStart = i
-			continue
-		}
-		if tableStart >= 0 && i > tableStart && strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
-			tableEnd = i
-			break
-		}
-	}
+	tableStart, tableEnd := codexSandboxTableRange(lines)
 	if tableStart < 0 {
 		separator := ""
 		if !strings.HasSuffix(text, "\n") {
@@ -115,7 +104,8 @@ func updateCodexConfig(text, backlotRoot string) (string, bool, error) {
 
 	for i := tableStart + 1; i < tableEnd; i++ {
 		trimmed := strings.TrimSpace(lines[i])
-		if !strings.HasPrefix(trimmed, "writable_roots") {
+		key, _, ok := strings.Cut(trimmed, "=")
+		if !ok || strings.TrimSpace(key) != "writable_roots" {
 			continue
 		}
 		if trimmed == "writable_roots = []" {
@@ -133,4 +123,55 @@ func updateCodexConfig(text, backlotRoot string) (string, bool, error) {
 	updated = append(updated, insert)
 	updated = append(updated, lines[tableStart+1:]...)
 	return strings.Join(updated, ""), true, nil
+}
+
+func codexConfigHasWritableRoot(text, backlotRoot string) bool {
+	lines := strings.SplitAfter(text, "\n")
+	tableStart, tableEnd := codexSandboxTableRange(lines)
+	if tableStart < 0 {
+		return false
+	}
+	for i := tableStart + 1; i < tableEnd; i++ {
+		key, value, ok := strings.Cut(strings.TrimSpace(lines[i]), "=")
+		if !ok || strings.TrimSpace(key) != "writable_roots" {
+			continue
+		}
+		return codexWritableRootsValueHasPath(value, backlotRoot)
+	}
+	return false
+}
+
+func codexSandboxTableRange(lines []string) (int, int) {
+	tableStart := -1
+	tableEnd := len(lines)
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "[sandbox_workspace_write]" {
+			tableStart = i
+			continue
+		}
+		if tableStart >= 0 && i > tableStart && strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
+			tableEnd = i
+			break
+		}
+	}
+	return tableStart, tableEnd
+}
+
+func codexWritableRootsValueHasPath(value, backlotRoot string) bool {
+	value = strings.TrimSpace(value)
+	if !strings.HasPrefix(value, "[") {
+		return false
+	}
+	end := strings.Index(value, "]")
+	if end < 0 {
+		return false
+	}
+	for _, entry := range strings.Split(value[1:end], ",") {
+		unquoted, err := strconv.Unquote(strings.TrimSpace(entry))
+		if err == nil && unquoted == backlotRoot {
+			return true
+		}
+	}
+	return false
 }
