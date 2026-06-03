@@ -192,8 +192,23 @@ Create your own `~/.backlot/.starter/` to customize new project workspaces:
 
 When Backlot creates a project private folder for the first time, it copies the
 contents of `.starter/` into that folder. The copy is literal: no variables, no
-template rendering, and no later re-application. If `.starter/` exists but is
-empty, new project folders start empty.
+template rendering, and no automatic re-application. If `.starter/` exists but
+is empty, new project folders start with only Backlot's `.backlot-project`
+metadata marker.
+
+To add new starter paths to project workspaces that already exist, run:
+
+```sh
+backlot starter apply
+```
+
+This applies the current `.starter/` to marked project workspaces in the local
+Backlot archive. It only creates missing files and directories. Existing paths
+are never overwritten, deleted, chmodded, or re-rendered. Use
+`backlot starter apply --dry-run` to preview the additions.
+
+`.backlot-project` is Backlot-owned metadata used to find project workspaces.
+Do not put it in `.starter/`; `backlot attach` manages it automatically.
 
 ## Using Backlot With LLMs And Agents
 
@@ -246,6 +261,7 @@ backlot init [--root PATH] [--remote URL]
 backlot clone <archive-url> [--root PATH]
 backlot attach [--root PATH]
 backlot detach [--root PATH]
+backlot starter apply [--root PATH] [--dry-run]
 backlot status [--root PATH]
 backlot sync [--root PATH] [-m MESSAGE]
 backlot sync [--root PATH] --continue
@@ -261,6 +277,7 @@ backlot version
 - `clone` clones an existing Backlot archive on a new machine.
 - `attach` creates `.backlot` for the current repo.
 - `detach` removes the current repo's Backlot symlink and local exclude entries.
+- `starter apply` adds missing custom starter paths to marked project workspaces.
 - `status` shows the current repo's Backlot state.
 - `sync` pulls, commits, rebases, and pushes the private archive; `--continue`
   and `--abort` recover interrupted rebase conflicts.

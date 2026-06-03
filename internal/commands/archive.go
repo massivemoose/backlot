@@ -11,6 +11,7 @@ import (
 )
 
 const archiveMarkerName = ".backlot-root"
+const projectMarkerName = ".backlot-project"
 
 const archiveMarker = `# Backlot archive root
 
@@ -30,6 +31,21 @@ func ensureArchiveMarker(root string) error {
 func isBacklotArchiveRoot(root string) bool {
 	info, err := os.Stat(filepath.Join(root, archiveMarkerName))
 	return err == nil && !info.IsDir()
+}
+
+func ensureProjectMarker(stateDir string) error {
+	path := filepath.Join(stateDir, projectMarkerName)
+	info, err := os.Lstat(path)
+	if err == nil {
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("Backlot project marker %s exists and is not a regular file", path)
+		}
+		return nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return os.WriteFile(path, nil, 0o644)
 }
 
 func requireBacklotArchiveRoot(root string) error {

@@ -68,6 +68,11 @@ func runSync(args []string, stdout, stderr io.Writer) error {
 	if *continueFlag {
 		return runSyncContinue(root, stdout)
 	}
+	if stateDir, ok := currentAttachedProjectStateDir(root); ok {
+		if err := ensureProjectMarker(stateDir); err != nil {
+			return err
+		}
+	}
 	if err := ensureNoGitOperationInProgress(root); err != nil {
 		return err
 	}

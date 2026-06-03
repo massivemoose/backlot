@@ -543,6 +543,9 @@ func TestAttachCopiesCustomStarterTemplate(t *testing.T) {
 	}
 
 	stateDir := filepath.Join(state, "github.com", "massivemoose", "ovek")
+	if _, err := os.Stat(filepath.Join(stateDir, ".backlot-project")); err != nil {
+		t.Fatalf("project marker missing: %v", err)
+	}
 	for path, want := range map[string]string{
 		filepath.Join(stateDir, "roadmap.md"):                  "# Roadmap\n",
 		filepath.Join(stateDir, ".secret-note"):                "hidden\n",
@@ -599,8 +602,8 @@ func TestAttachEmptyStarterTemplateCreatesEmptyStateDir(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(entries) != 0 {
-		t.Fatalf("empty .starter created project files: %v", entries)
+	if len(entries) != 1 || entries[0].Name() != ".backlot-project" {
+		t.Fatalf("empty .starter created unexpected project files: %v", entries)
 	}
 }
 
@@ -643,9 +646,42 @@ func TestAttachDoesNotCopyStarterIntoExistingStateDir(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(stateDir, "template.md")); !os.IsNotExist(err) {
 		t.Fatalf("attach copied .starter into existing state dir: %v", err)
 	}
+	if _, err := os.Stat(filepath.Join(stateDir, ".backlot-project")); err != nil {
+		t.Fatalf("project marker missing in existing state dir: %v", err)
+	}
 	if got, err := os.ReadFile(filepath.Join(stateDir, "custom.md")); err != nil || string(got) != "custom\n" {
 		t.Fatalf("custom state file changed: got %q, err %v", string(got), err)
 	}
+}
+
+func TestAttachRejectsProjectMarkerInStarterTemplate(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+
+	tmp := t.TempDir()
+	state := filepath.Join(tmp, "state")
+	public := filepath.Join(tmp, "public")
+	starter := filepath.Join(state, ".starter")
+	mustRunBacklotInit(t, state)
+	mustRunGit(t, tmp, "init", public)
+	mustRunGit(t, public, "remote", "add", "origin", "git@github.com:massivemoose/ovek.git")
+	if err := os.MkdirAll(starter, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(starter, ".backlot-project"), []byte("user marker\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	withChdir(t, public, func() {
+		var out, errOut bytes.Buffer
+		if code := Run([]string{"attach", "--root", state}, &out, &errOut); code == 0 {
+			t.Fatalf("attach succeeded with reserved starter marker, stdout = %s", out.String())
+		}
+		if !strings.Contains(errOut.String(), ".starter cannot contain .backlot-project") {
+			t.Fatalf("attach stderr = %q, want reserved marker error", errOut.String())
+		}
+	})
 }
 
 func TestAttachRejectsSymlinkInStarterTemplate(t *testing.T) {
@@ -767,6 +803,9 @@ func TestAttachPreservesExistingCustomStateDir(t *testing.T) {
 	if got, err := os.ReadFile(filepath.Join(stateDir, "custom.md")); err != nil || string(got) != "custom\n" {
 		t.Fatalf("custom state file changed: got %q, err %v", string(got), err)
 	}
+	if _, err := os.Stat(filepath.Join(stateDir, ".backlot-project")); err != nil {
+		t.Fatalf("project marker missing in existing custom state dir: %v", err)
+	}
 }
 
 func TestAttachPreservesExistingEmptyStateDir(t *testing.T) {
@@ -796,8 +835,8 @@ func TestAttachPreservesExistingEmptyStateDir(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(entries) != 0 {
-		t.Fatalf("attach added starter paths to existing empty state dir: %v", entries)
+	if len(entries) != 1 || entries[0].Name() != ".backlot-project" {
+		t.Fatalf("attach added unexpected paths to existing empty state dir: %v", entries)
 	}
 }
 
@@ -829,6 +868,245 @@ func TestAttachRejectsStatePathThatIsFile(t *testing.T) {
 			t.Fatalf("attach stderr = %q, want not-directory error", errOut.String())
 		}
 	})
+}
+
+func TestStarterApplyAddsMissingDirectoryToMarkedWorkspaces(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+
+	tmp := t.TempDir()
+	state := filepath.Join(tmp, "state")
+	mustRunBacklotInit(t, state)
+	if err := os.MkdirAll(filepath.Join(state, ".starter", "plans"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, dir := range []string{
+		filepath.Join(state, "github.com", "massivemoose", "backlot"),
+		filepath.Join(state, "github.com", "massivemoose", "ovek"),
+	} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, ".backlot-project"), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"starter", "apply", "--root", state}, &out, &errOut); code != 0 {
+		t.Fatalf("starter apply exit code = %d, stderr = %s", code, errOut.String())
+	}
+	for _, path := range []string{
+		filepath.Join(state, "github.com", "massivemoose", "backlot", "plans"),
+		filepath.Join(state, "github.com", "massivemoose", "ovek", "plans"),
+	} {
+		if info, err := os.Stat(path); err != nil || !info.IsDir() {
+			t.Fatalf("starter apply did not create directory %s: info=%v err=%v", path, info, err)
+		}
+	}
+	text := out.String()
+	for _, want := range []string{
+		"Workspaces: 2",
+		"github.com/massivemoose/backlot: added=1 skipped=0 conflicts=0",
+		"github.com/massivemoose/ovek: added=1 skipped=0 conflicts=0",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("starter apply output missing %q:\n%s", want, text)
+		}
+	}
+}
+
+func TestStarterApplyAddsMissingNestedFilesUnderExistingDirectories(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+
+	tmp := t.TempDir()
+	state := filepath.Join(tmp, "state")
+	workspace := filepath.Join(state, "github.com", "massivemoose", "backlot")
+	mustRunBacklotInit(t, state)
+	if err := os.MkdirAll(filepath.Join(state, ".starter", "llm", "prompts"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(state, ".starter", "llm", "prompts", "review.md"), []byte("review\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(workspace, "llm"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, ".backlot-project"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"starter", "apply", "--root", state}, &out, &errOut); code != 0 {
+		t.Fatalf("starter apply exit code = %d, stderr = %s", code, errOut.String())
+	}
+	got, err := os.ReadFile(filepath.Join(workspace, "llm", "prompts", "review.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "review\n" {
+		t.Fatalf("nested starter file = %q, want review", string(got))
+	}
+	if !strings.Contains(out.String(), "github.com/massivemoose/backlot: added=2 skipped=1 conflicts=0") {
+		t.Fatalf("starter apply output = %q, want nested add/skip summary", out.String())
+	}
+}
+
+func TestStarterApplyNeverOverwritesExistingFiles(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+
+	tmp := t.TempDir()
+	state := filepath.Join(tmp, "state")
+	workspace := filepath.Join(state, "github.com", "massivemoose", "backlot")
+	mustRunBacklotInit(t, state)
+	if err := os.MkdirAll(filepath.Join(state, ".starter"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(state, ".starter", "notes.md"), []byte("starter\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, ".backlot-project"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "notes.md"), []byte("custom\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"starter", "apply", "--root", state}, &out, &errOut); code != 0 {
+		t.Fatalf("starter apply exit code = %d, stderr = %s", code, errOut.String())
+	}
+	got, err := os.ReadFile(filepath.Join(workspace, "notes.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "custom\n" {
+		t.Fatalf("starter apply overwrote existing file: %q", string(got))
+	}
+	if !strings.Contains(out.String(), "github.com/massivemoose/backlot: added=0 skipped=1 conflicts=0") {
+		t.Fatalf("starter apply output = %q, want skipped existing file", out.String())
+	}
+}
+
+func TestStarterApplyReportsConflictingExistingPathTypes(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+
+	tmp := t.TempDir()
+	state := filepath.Join(tmp, "state")
+	workspace := filepath.Join(state, "github.com", "massivemoose", "backlot")
+	mustRunBacklotInit(t, state)
+	if err := os.MkdirAll(filepath.Join(state, ".starter", "plans"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, ".backlot-project"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "plans"), []byte("not a directory\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"starter", "apply", "--root", state}, &out, &errOut); code != 0 {
+		t.Fatalf("starter apply exit code = %d, stderr = %s", code, errOut.String())
+	}
+	got, err := os.ReadFile(filepath.Join(workspace, "plans"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "not a directory\n" {
+		t.Fatalf("starter apply changed conflicting file: %q", string(got))
+	}
+	if !strings.Contains(out.String(), "github.com/massivemoose/backlot: added=0 skipped=0 conflicts=1") {
+		t.Fatalf("starter apply output = %q, want conflict summary", out.String())
+	}
+}
+
+func TestStarterApplyDryRunDoesNotWriteFiles(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+
+	tmp := t.TempDir()
+	state := filepath.Join(tmp, "state")
+	workspace := filepath.Join(state, "github.com", "massivemoose", "backlot")
+	mustRunBacklotInit(t, state)
+	if err := os.MkdirAll(filepath.Join(state, ".starter", "plans"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, ".backlot-project"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"starter", "apply", "--root", state, "--dry-run"}, &out, &errOut); code != 0 {
+		t.Fatalf("starter apply --dry-run exit code = %d, stderr = %s", code, errOut.String())
+	}
+	if _, err := os.Stat(filepath.Join(workspace, "plans")); !os.IsNotExist(err) {
+		t.Fatalf("dry-run created plans path: %v", err)
+	}
+	text := out.String()
+	for _, want := range []string{
+		"Dry run: yes",
+		"github.com/massivemoose/backlot: added=1 skipped=0 conflicts=0",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("starter apply --dry-run output missing %q:\n%s", want, text)
+		}
+	}
+}
+
+func TestStarterApplyDiscoveryUsesProjectMarkersOnlyOnce(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+
+	tmp := t.TempDir()
+	state := filepath.Join(tmp, "state")
+	workspace := filepath.Join(state, "github.com", "massivemoose", "backlot")
+	nested := filepath.Join(workspace, "nested")
+	mustRunBacklotInit(t, state)
+	if err := os.MkdirAll(filepath.Join(state, ".starter", "plans"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, dir := range []string{workspace, nested} {
+		if err := os.WriteFile(filepath.Join(dir, ".backlot-project"), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"starter", "apply", "--root", state}, &out, &errOut); code != 0 {
+		t.Fatalf("starter apply exit code = %d, stderr = %s", code, errOut.String())
+	}
+	text := out.String()
+	if !strings.Contains(text, "Workspaces: 1") {
+		t.Fatalf("starter apply output = %q, want one discovered workspace", text)
+	}
+	if strings.Contains(text, "nested:") {
+		t.Fatalf("starter apply treated nested marker as a separate workspace:\n%s", text)
+	}
+	if _, err := os.Stat(filepath.Join(workspace, "plans")); err != nil {
+		t.Fatalf("starter apply did not apply to outer workspace: %v", err)
+	}
 }
 
 func TestDetachRemovesManagedSymlinkAndExcludeEntries(t *testing.T) {
@@ -1271,6 +1549,51 @@ func TestSyncDirtyNoRemoteCommitsLocallyOnlyInBacklotRoot(t *testing.T) {
 	}
 	if got := runGitOutput(t, public, "status", "--short"); got != "?? public.txt" {
 		t.Fatalf("public repo status = %q, want untracked file untouched", got)
+	}
+}
+
+func TestSyncBackfillsProjectMarkerForCurrentAttachedWorkspace(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+
+	tmp := t.TempDir()
+	state := filepath.Join(tmp, "state")
+	public := filepath.Join(tmp, "public")
+	stateDir := filepath.Join(state, "github.com", "massivemoose", "ovek")
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"init", "--root", state}, &out, &errOut); code != 0 {
+		t.Fatalf("init exit code = %d, stderr = %s", code, errOut.String())
+	}
+	configureGitIdentity(t, state)
+	mustRunGit(t, tmp, "init", public)
+	mustRunGit(t, public, "remote", "add", "origin", "git@github.com:massivemoose/ovek.git")
+	withChdir(t, public, func() {
+		out.Reset()
+		errOut.Reset()
+		if code := Run([]string{"attach", "--root", state}, &out, &errOut); code != 0 {
+			t.Fatalf("attach exit code = %d, stderr = %s", code, errOut.String())
+		}
+	})
+	if err := os.Remove(filepath.Join(stateDir, ".backlot-project")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stateDir, "notes.md"), []byte("private\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	withChdir(t, public, func() {
+		out.Reset()
+		errOut.Reset()
+		if code := Run([]string{"sync", "--root", state, "-m", "Update private notes"}, &out, &errOut); code != 0 {
+			t.Fatalf("sync exit code = %d, stderr = %s", code, errOut.String())
+		}
+	})
+	if _, err := os.Stat(filepath.Join(stateDir, ".backlot-project")); err != nil {
+		t.Fatalf("sync did not backfill project marker: %v", err)
+	}
+	if got := runGitOutput(t, state, "status", "--short"); got != "" {
+		t.Fatalf("state repo status = %q, want clean", got)
 	}
 }
 
