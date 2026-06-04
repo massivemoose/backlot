@@ -430,6 +430,12 @@ func printAutosyncState(stdout io.Writer, managedPaths autosync.Paths, state aut
 	if state.PausedReason != "" {
 		fmt.Fprintf(stdout, "Paused:        %s\n", state.PausedReason)
 	}
+	for _, conflict := range state.ConflictPaths {
+		fmt.Fprintf(stdout, "Conflict:      %s\n", conflict)
+	}
+	if state.ConsecutiveFailures > 0 {
+		fmt.Fprintf(stdout, "Failures:      %d (%s)\n", state.ConsecutiveFailures, state.FailureCategory)
+	}
 	if state.LastError != "" {
 		fmt.Fprintf(stdout, "Last error:    %s\n", state.LastError)
 		fmt.Fprintf(stdout, "Error log:     %s\n", managedPaths.LogPath)
@@ -439,6 +445,9 @@ func printAutosyncState(stdout io.Writer, managedPaths autosync.Paths, state aut
 	}
 	if !state.LastNotification.IsZero() {
 		fmt.Fprintf(stdout, "Last alert:    %s\n", state.LastNotification.Format(time.RFC3339))
+	}
+	if state.LastNotificationError != "" {
+		fmt.Fprintf(stdout, "Alert error:   %s\n", state.LastNotificationError)
 	}
 }
 

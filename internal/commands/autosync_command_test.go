@@ -165,6 +165,76 @@ func TestAutosyncRefusesForeignManagedFiles(t *testing.T) {
 	}
 }
 
+func TestStatusAndDoctorReportPausedAutosync(t *testing.T) {
+	home := t.TempDir()
+	_, state, _ := createAutosyncConflictSetup(t)
+	writeManagedAutosyncConfig(t, home, state)
+	managedPaths, err := autosync.ResolvePaths(home, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(managedPaths.PlistPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(managedPaths.PlistPath, []byte("managed"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	binary := filepath.Join(t.TempDir(), "backlot")
+	if err := os.WriteFile(binary, []byte("binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	restoreCommands := stubAutosyncCommandEnvironment(t, home, binary, func(...string) error { return nil })
+	defer restoreCommands()
+	restoreRunner := stubAutosyncEnvironment(t, home, func(_, _ string) error { return nil })
+	defer restoreRunner()
+
+	public := filepath.Join(t.TempDir(), "public")
+	mustRunGit(t, filepath.Dir(public), "init", public)
+	mustRunGit(t, public, "remote", "add", "origin", "git@github.com:massivemoose/ovek.git")
+	withChdir(t, public, func() {
+		var out, errOut bytes.Buffer
+		if code := Run([]string{"attach", "--root", state}, &out, &errOut); code != 0 {
+			t.Fatalf("attach exit code = %d, stderr = %s", code, errOut.String())
+		}
+	})
+	if err := runManagedAutosync(state); err != nil {
+		t.Fatalf("runManagedAutosync returned error: %v", err)
+	}
+
+	var autosyncOut, autosyncErr bytes.Buffer
+	if code := Run([]string{"autosync", "status", "--root", state}, &autosyncOut, &autosyncErr); code != 0 {
+		t.Fatalf("autosync status exit code = %d, stderr = %s", code, autosyncErr.String())
+	}
+	for _, want := range []string{"Paused:        conflict", "Conflict:", "Recovery:      backlot sync"} {
+		if !strings.Contains(autosyncOut.String(), want) {
+			t.Fatalf("autosync status output missing %q:\n%s", want, autosyncOut.String())
+		}
+	}
+
+	withChdir(t, public, func() {
+		var out, errOut bytes.Buffer
+		if code := Run([]string{"status", "--root", state}, &out, &errOut); code != 0 {
+			t.Fatalf("status exit code = %d, stderr = %s", code, errOut.String())
+		}
+		for _, want := range []string{"Auto-sync:     paused: conflict", "Auto recovery: backlot sync"} {
+			if !strings.Contains(out.String(), want) {
+				t.Fatalf("status output missing %q:\n%s", want, out.String())
+			}
+		}
+
+		out.Reset()
+		errOut.Reset()
+		if code := Run([]string{"doctor", "--root", state}, &out, &errOut); code == 0 {
+			t.Fatalf("doctor succeeded while auto-sync paused, stdout = %s", out.String())
+		}
+		for _, want := range []string{"Auto-sync is paused: conflict", "Recovery: backlot sync"} {
+			if !strings.Contains(out.String(), want) {
+				t.Fatalf("doctor output missing %q:\n%s", want, out.String())
+			}
+		}
+	})
+}
+
 func stubAutosyncCommandEnvironment(t *testing.T, home, binary string, launchctl func(...string) error) func() {
 	t.Helper()
 	oldHome := autosyncHomeDir
