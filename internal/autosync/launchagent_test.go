@@ -35,7 +35,7 @@ func TestRenderLaunchAgentIncludesManagedRunnerAndSchedule(t *testing.T) {
 		"<string>--root</string>",
 		"<string>/Users/me/Backlot &amp; Notes</string>",
 		"<key>RunAtLoad</key>",
-		"<true></true>",
+		"<true/>",
 		"<key>StartInterval</key>",
 		"<integer>900</integer>",
 		"<key>ProcessType</key>",
@@ -44,5 +44,8 @@ func TestRenderLaunchAgentIncludesManagedRunnerAndSchedule(t *testing.T) {
 		if !strings.Contains(text, want) {
 			t.Fatalf("LaunchAgent missing %q:\n%s", want, text)
 		}
+	}
+	if strings.Contains(text, "<true></true>") {
+		t.Fatalf("LaunchAgent uses expanded plist boolean rejected by launchd:\n%s", text)
 	}
 }

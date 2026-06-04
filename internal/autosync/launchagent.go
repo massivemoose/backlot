@@ -22,7 +22,7 @@ func RenderLaunchAgent(paths Paths, config Config) ([]byte, error) {
 		b.WriteString("</string>")
 	}
 	b.WriteString(`</array>`)
-	b.WriteString(`<key>RunAtLoad</key><true></true>`)
+	b.WriteString(`<key>RunAtLoad</key><true/>`)
 	b.WriteString(fmt.Sprintf(`<key>StartInterval</key><integer>%d</integer>`, config.IntervalSeconds))
 	writePlistString(&b, "ProcessType", "Background")
 	b.WriteString(`</dict></plist>`)
