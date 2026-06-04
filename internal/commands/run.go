@@ -37,17 +37,18 @@ func RunWithBuildInfo(args []string, stdout, stderr io.Writer, build BuildInfo) 
 	}
 
 	commands := map[string]commandFunc{
-		"help":    runHelp,
-		"agents":  runAgents,
-		"init":    runInit,
-		"clone":   runClone,
-		"attach":  runAttach,
-		"detach":  runDetach,
-		"starter": runStarter,
-		"status":  runStatus,
-		"sync":    runSync,
-		"protect": runProtect,
-		"doctor":  runDoctor,
+		"help":     runHelp,
+		"agents":   runAgents,
+		"init":     runInit,
+		"clone":    runClone,
+		"attach":   runAttach,
+		"autosync": runAutosync,
+		"detach":   runDetach,
+		"starter":  runStarter,
+		"status":   runStatus,
+		"sync":     runSync,
+		"protect":  runProtect,
+		"doctor":   runDoctor,
 		"version": func(args []string, stdout, stderr io.Writer) error {
 			return runVersion(args, stdout, stderr, build)
 		},
@@ -85,6 +86,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  init     [--root PATH] [--remote URL]")
 	fmt.Fprintln(w, "  clone    <archive-url> [--root PATH]")
 	fmt.Fprintln(w, "  attach   [--root PATH]")
+	fmt.Fprintln(w, "  autosync enable|disable|status [--root PATH]")
 	fmt.Fprintln(w, "  detach   [--root PATH]")
 	fmt.Fprintln(w, "  starter  apply [--root PATH] [--dry-run]")
 	fmt.Fprintln(w, "  status   [--root PATH]")
