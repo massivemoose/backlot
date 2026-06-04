@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/massivemoose/backlot/internal/autosync"
 	"github.com/massivemoose/backlot/internal/gitutil"
 	"github.com/massivemoose/backlot/internal/paths"
 )
@@ -72,8 +73,18 @@ func runSync(args []string, stdout, stderr io.Writer) error {
 		return runSyncAbort(root, stdout, *quiet)
 	}
 	if *continueFlag {
-		return runSyncContinue(root, stdout, *quiet)
+		if err := runSyncContinue(root, stdout, *quiet); err != nil {
+			return err
+		}
+		return recordManualSyncSuccess(root)
 	}
+	if err := runNormalSync(root, *message, stdout, *quiet); err != nil {
+		return err
+	}
+	return recordManualSyncSuccess(root)
+}
+
+func runNormalSync(root, message string, stdout io.Writer, quiet bool) error {
 	if stateDir, ok := currentAttachedProjectStateDir(root); ok {
 		if err := ensureProjectMarker(stateDir); err != nil {
 			return err
@@ -97,14 +108,14 @@ func runSync(args []string, stdout, stderr io.Writer) error {
 
 	if !dirty {
 		if !hasOrigin {
-			syncPrintln(stdout, *quiet, "Backlot state is clean.")
+			syncPrintln(stdout, quiet, "Backlot state is clean.")
 			return nil
 		}
 		if !upstream {
 			if err := pushFirstUpstream(root); err != nil {
 				return err
 			}
-			syncPrintln(stdout, *quiet, "Backlot state synced.")
+			syncPrintln(stdout, quiet, "Backlot state synced.")
 			return nil
 		}
 		if _, err := gitutil.RunGit(root, "pull", "--rebase"); err != nil {
@@ -113,7 +124,7 @@ func runSync(args []string, stdout, stderr io.Writer) error {
 		if _, err := gitutil.RunGit(root, "push"); err != nil {
 			return syncGitError("push", root, err)
 		}
-		syncPrintln(stdout, *quiet, "Backlot state synced.")
+		syncPrintln(stdout, quiet, "Backlot state synced.")
 		return nil
 	}
 
@@ -125,24 +136,24 @@ func runSync(args []string, stdout, stderr io.Writer) error {
 		return syncGitError("staged change check", root, err)
 	}
 	if staged {
-		if _, err := gitutil.RunGit(root, "commit", "-m", *message); err != nil {
+		if _, err := gitutil.RunGit(root, "commit", "-m", message); err != nil {
 			return syncGitError("committing private state", root, err)
 		}
 	} else {
 		if !hasOrigin {
-			syncPrintln(stdout, *quiet, "Backlot state is clean.")
+			syncPrintln(stdout, quiet, "Backlot state is clean.")
 			return nil
 		}
 	}
 	if !hasOrigin {
-		syncPrintln(stdout, *quiet, "No origin remote configured; committed locally and skipped push.")
+		syncPrintln(stdout, quiet, "No origin remote configured; committed locally and skipped push.")
 		return nil
 	}
 	if !upstream {
 		if err := pushFirstUpstream(root); err != nil {
 			return err
 		}
-		syncPrintln(stdout, *quiet, "Backlot state synced.")
+		syncPrintln(stdout, quiet, "Backlot state synced.")
 		return nil
 	}
 	if _, err := gitutil.RunGit(root, "pull", "--rebase"); err != nil {
@@ -151,7 +162,7 @@ func runSync(args []string, stdout, stderr io.Writer) error {
 	if _, err := gitutil.RunGit(root, "push"); err != nil {
 		return syncGitError("push", root, err)
 	}
-	syncPrintln(stdout, *quiet, "Backlot state synced.")
+	syncPrintln(stdout, quiet, "Backlot state synced.")
 	return nil
 }
 
@@ -199,6 +210,7 @@ func syncPrintln(stdout io.Writer, quiet bool, text string) {
 
 type syncState struct {
 	InProgress bool
+	Operation  string
 	Conflicts  []string
 }
 
@@ -248,12 +260,45 @@ func currentBranch(root string) (string, error) {
 	return branch, nil
 }
 
+type syncFailure struct {
+	Category   string
+	Conflict   bool
+	Conflicts  []string
+	Operation  string
+	LocalHead  string
+	RemoteHead string
+	err        error
+}
+
+func (e *syncFailure) Error() string {
+	return e.err.Error()
+}
+
+func (e *syncFailure) Unwrap() error {
+	return e.err
+}
+
 func syncGitError(operation string, root string, err error) error {
-	return fmt.Errorf("%s failed while syncing Backlot root %s: %w", operation, root, err)
+	return &syncFailure{
+		Category: operation,
+		err:      fmt.Errorf("%s failed while syncing Backlot root %s: %w", operation, root, err),
+	}
 }
 
 func syncRebaseError(root string, err error) error {
-	return fmt.Errorf("%w\n\n%s", syncGitError("pull --rebase", root, err), syncRecoveryInstructions(root))
+	failure := &syncFailure{
+		Category: "pull --rebase",
+		err:      fmt.Errorf("%w\n\n%s", syncGitError("pull --rebase", root, err), syncRecoveryInstructions(root)),
+	}
+	state, stateErr := detectSyncState(root)
+	if stateErr == nil {
+		failure.Operation = state.Operation
+		failure.Conflicts = append([]string(nil), state.Conflicts...)
+		failure.Conflict = state.Operation == "rebase" && len(state.Conflicts) > 0
+	}
+	failure.LocalHead, _ = gitutil.RunGit(root, "rev-parse", "ORIG_HEAD")
+	failure.RemoteHead, _ = gitutil.RunGit(root, "rev-parse", "@{u}")
+	return failure
 }
 
 func syncRecoveryInstructions(root string) string {
@@ -362,6 +407,16 @@ func detectSyncState(root string) (syncState, error) {
 		}
 		if _, err := os.Stat(path); err == nil {
 			state.InProgress = true
+			switch name {
+			case "rebase-apply", "rebase-merge":
+				state.Operation = "rebase"
+			case "MERGE_HEAD":
+				state.Operation = "merge"
+			case "CHERRY_PICK_HEAD":
+				state.Operation = "cherry-pick"
+			case "REVERT_HEAD":
+				state.Operation = "revert"
+			}
 		} else if !errors.Is(err, os.ErrNotExist) {
 			return state, err
 		}
@@ -377,4 +432,33 @@ func detectSyncState(root string) (syncState, error) {
 		}
 	}
 	return state, nil
+}
+
+func recordManualSyncSuccess(root string) error {
+	home, err := autosyncHomeDir()
+	if err != nil {
+		return nil
+	}
+	managedPaths, err := autosync.ResolvePaths(home, root)
+	if err != nil {
+		return nil
+	}
+	config, err := autosync.LoadConfig(managedPaths.ConfigPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if err := autosync.ValidateManagedConfig(config, managedPaths); err != nil {
+		return err
+	}
+	state, err := autosync.LoadState(managedPaths.StatePath)
+	if errors.Is(err, os.ErrNotExist) {
+		state = autosync.State{}
+	} else if err != nil {
+		return err
+	}
+	state.RecordSuccess(autosyncNow())
+	return autosync.WriteState(managedPaths.StatePath, state)
 }
