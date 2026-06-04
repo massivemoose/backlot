@@ -100,6 +100,36 @@ func TestIsGitRepoRootRejectsSubdirectory(t *testing.T) {
 	}
 }
 
+func TestHasStagedChanges(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+
+	repo := t.TempDir()
+	mustRunGitCommand(t, repo, "init")
+
+	changed, err := HasStagedChanges(repo)
+	if err != nil {
+		t.Fatalf("HasStagedChanges clean returned error: %v", err)
+	}
+	if changed {
+		t.Fatal("HasStagedChanges clean = true, want false")
+	}
+
+	if err := os.WriteFile(filepath.Join(repo, "notes.md"), []byte("private\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustRunGitCommand(t, repo, "add", "notes.md")
+
+	changed, err = HasStagedChanges(repo)
+	if err != nil {
+		t.Fatalf("HasStagedChanges staged returned error: %v", err)
+	}
+	if !changed {
+		t.Fatal("HasStagedChanges staged = false, want true")
+	}
+}
+
 func mustRunGitCommand(t *testing.T, dir string, args ...string) {
 	t.Helper()
 	cmd := exec.Command("git", args...)
