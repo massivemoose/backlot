@@ -71,6 +71,9 @@ func runAttach(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
+	if err := ensureProjectMarker(stateDir); err != nil {
+		return err
+	}
 	if err := paths.EnsureManagedSymlink(filepath.Join(repoRoot, *linkName), stateDir); err != nil {
 		return err
 	}
@@ -147,6 +150,13 @@ func validateStarterTemplate(starterDir string) error {
 		if path == starterDir {
 			return nil
 		}
+		rel, err := filepath.Rel(starterDir, path)
+		if err != nil {
+			return err
+		}
+		if rel == projectMarkerName {
+			return fmt.Errorf(".starter cannot contain %s; Backlot manages this marker", projectMarkerName)
+		}
 		info, err := entry.Info()
 		if err != nil {
 			return err
@@ -173,6 +183,9 @@ func copyStarterTemplate(starterDir, stateDir string) error {
 		rel, err := filepath.Rel(starterDir, path)
 		if err != nil {
 			return err
+		}
+		if rel == projectMarkerName {
+			return fmt.Errorf(".starter cannot contain %s; Backlot manages this marker", projectMarkerName)
 		}
 		dst := filepath.Join(stateDir, rel)
 		if info.IsDir() {

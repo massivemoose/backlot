@@ -43,6 +43,7 @@ func RunWithBuildInfo(args []string, stdout, stderr io.Writer, build BuildInfo) 
 		"clone":   runClone,
 		"attach":  runAttach,
 		"detach":  runDetach,
+		"starter": runStarter,
 		"status":  runStatus,
 		"sync":    runSync,
 		"protect": runProtect,
@@ -85,6 +86,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  clone    <archive-url> [--root PATH]")
 	fmt.Fprintln(w, "  attach   [--root PATH]")
 	fmt.Fprintln(w, "  detach   [--root PATH]")
+	fmt.Fprintln(w, "  starter  apply [--root PATH] [--dry-run]")
 	fmt.Fprintln(w, "  status   [--root PATH]")
 	fmt.Fprintln(w, "  sync     [--root PATH] [-m MESSAGE|--continue|--abort]")
 	fmt.Fprintln(w, "  protect")
