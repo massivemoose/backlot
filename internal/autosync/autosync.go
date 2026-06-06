@@ -70,7 +70,7 @@ func ResolvePaths(homeDir, root string) (Paths, error) {
 	if err != nil {
 		return Paths{}, err
 	}
-	canonicalRoot, err := filepath.EvalSymlinks(absRoot)
+	canonicalRoot, err := canonicalPath(absRoot)
 	if err != nil {
 		return Paths{}, err
 	}
@@ -89,6 +89,27 @@ func ResolvePaths(homeDir, root string) (Paths, error) {
 		LogPath:    filepath.Join(homeDir, "Library", "Logs", "Backlot", "autosync-"+id+".log"),
 		PlistPath:  filepath.Join(homeDir, "Library", "LaunchAgents", label+".plist"),
 	}, nil
+}
+
+func canonicalPath(path string) (string, error) {
+	current := filepath.Clean(path)
+	var suffix []string
+	for {
+		resolved, err := filepath.EvalSymlinks(current)
+		if err == nil {
+			parts := append([]string{resolved}, suffix...)
+			return filepath.Join(parts...), nil
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return "", err
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return filepath.Clean(path), nil
+		}
+		suffix = append([]string{filepath.Base(current)}, suffix...)
+		current = parent
+	}
 }
 
 func ValidateManagedConfig(config Config, paths Paths) error {
@@ -146,6 +167,8 @@ func (s *State) RecordSuccess(now time.Time) {
 	s.ConsecutiveFailures = 0
 	s.FailureCategory = ""
 	s.LastError = ""
+	s.LastNotification = time.Time{}
+	s.LastNotificationError = ""
 	s.LastNotificationCategory = ""
 	s.PendingNotification = ""
 	s.ConflictPaths = nil
@@ -220,6 +243,17 @@ func (s *State) RecordSkippedBusy(now time.Time) {
 func (s *State) RecordSkippedPaused(now time.Time) {
 	s.LastRun = now
 	s.Result = ResultSkippedPaused
+}
+
+func (s *State) RecordAbortRecovery(now time.Time) {
+	if s.PausedReason != PauseUrgentRecovery {
+		return
+	}
+	s.LastRun = now
+	s.Result = ResultFailed
+	s.PausedReason = PauseConflict
+	s.LastError = "local and remote Backlot changes conflict"
+	s.RecoveryCommand = "backlot sync"
 }
 
 func (s *State) RecordNotification(now time.Time, err error) {

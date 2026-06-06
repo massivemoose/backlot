@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/massivemoose/backlot/internal/autosync"
+	"github.com/massivemoose/backlot/internal/gitutil"
 )
 
 func TestManagedAutosyncAbortsConflictPausesAndNotifiesOnce(t *testing.T) {
@@ -141,6 +142,111 @@ func TestManagedAutosyncRecordsUrgentRecoveryWhenAbortFails(t *testing.T) {
 		t.Fatal(err)
 	} else if !syncState.Interrupted() {
 		t.Fatal("abort failure did not leave interrupted sync state")
+	}
+
+	autosyncAbortRebase = func(root string) error {
+		_, err := gitutil.RunGit(root, "rebase", "--abort")
+		return err
+	}
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"sync", "--root", state, "--abort"}, &out, &errOut); code != 0 {
+		t.Fatalf("manual sync --abort exit code = %d, stderr = %s", code, errOut.String())
+	}
+	got = readAutosyncState(t, home, state)
+	if got.PausedReason != autosync.PauseConflict || got.RecoveryCommand != "backlot sync" {
+		t.Fatalf("manual abort did not transition urgent recovery to conflict pause: %+v", got)
+	}
+}
+
+func TestManagedAutosyncPersistsFailureWhenLogWriteFails(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+
+	home := t.TempDir()
+	state := filepath.Join(t.TempDir(), "state")
+	mustRunBacklotInit(t, state)
+	configureGitIdentity(t, state)
+	mustRunGit(t, state, "remote", "add", "origin", filepath.Join(t.TempDir(), "missing"))
+	writeManagedAutosyncConfig(t, home, state)
+
+	restore := stubAutosyncEnvironment(t, home, func(_, _ string) error { return nil })
+	defer restore()
+	oldWriteLog := autosyncWriteLog
+	autosyncWriteLog = func(string, string) error { return errors.New("log denied") }
+	defer func() { autosyncWriteLog = oldWriteLog }()
+
+	if err := runManagedAutosync(state); err != nil {
+		t.Fatalf("runManagedAutosync returned error after log failure: %v", err)
+	}
+	got := readAutosyncState(t, home, state)
+	if got.Result != autosync.ResultFailed || got.ConsecutiveFailures != 1 {
+		t.Fatalf("failure state was not persisted after log failure: %+v", got)
+	}
+}
+
+func TestManagedAutosyncCountsArchivePreflightFailures(t *testing.T) {
+	home := t.TempDir()
+	state := filepath.Join(t.TempDir(), "state")
+	mustRunBacklotInit(t, state)
+	writeManagedAutosyncConfig(t, home, state)
+	if err := os.RemoveAll(state); err != nil {
+		t.Fatal(err)
+	}
+
+	notifications := 0
+	restore := stubAutosyncEnvironment(t, home, func(_, _ string) error {
+		notifications++
+		return nil
+	})
+	defer restore()
+
+	for i := 0; i < 3; i++ {
+		if err := runManagedAutosync(state); err != nil {
+			t.Fatalf("runManagedAutosync preflight failure %d returned error: %v", i+1, err)
+		}
+	}
+	got := readAutosyncState(t, home, state)
+	if got.FailureCategory != "archive" || got.ConsecutiveFailures != 3 {
+		t.Fatalf("preflight failure state = %+v, want archive count 3", got)
+	}
+	if notifications != 1 {
+		t.Fatalf("preflight notifications = %d, want 1", notifications)
+	}
+}
+
+func TestManagedAutosyncBusyPreservesExistingFailureState(t *testing.T) {
+	home := t.TempDir()
+	state := filepath.Join(t.TempDir(), "state")
+	mustRunBacklotInit(t, state)
+	writeManagedAutosyncConfig(t, home, state)
+	managedPaths, err := autosync.ResolvePaths(home, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	existing := autosync.State{
+		Result:              autosync.ResultFailed,
+		FailureCategory:     "fetch",
+		ConsecutiveFailures: 2,
+		LastError:           "offline",
+	}
+	if err := autosync.WriteState(managedPaths.StatePath, existing); err != nil {
+		t.Fatal(err)
+	}
+	release, err := acquireSyncLock(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	restore := stubAutosyncEnvironment(t, home, func(_, _ string) error { return nil })
+	defer restore()
+
+	if err := runManagedAutosync(state); err != nil {
+		t.Fatalf("runManagedAutosync busy returned error: %v", err)
+	}
+	got := readAutosyncState(t, home, state)
+	if got.Result != autosync.ResultFailed || got.ConsecutiveFailures != 2 || got.LastError != "offline" {
+		t.Fatalf("busy run overwrote existing failure state: %+v", got)
 	}
 }
 

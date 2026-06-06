@@ -70,7 +70,10 @@ func runSync(args []string, stdout, stderr io.Writer) error {
 	}
 	defer release()
 	if *abortFlag {
-		return runSyncAbort(root, stdout, *quiet)
+		if err := runSyncAbort(root, stdout, *quiet); err != nil {
+			return err
+		}
+		return recordManualSyncAbort(root)
 	}
 	if *continueFlag {
 		if err := runSyncContinue(root, stdout, *quiet); err != nil {
@@ -435,6 +438,18 @@ func detectSyncState(root string) (syncState, error) {
 }
 
 func recordManualSyncSuccess(root string) error {
+	return updateManagedAutosyncState(root, func(state *autosync.State) {
+		state.RecordSuccess(autosyncNow())
+	})
+}
+
+func recordManualSyncAbort(root string) error {
+	return updateManagedAutosyncState(root, func(state *autosync.State) {
+		state.RecordAbortRecovery(autosyncNow())
+	})
+}
+
+func updateManagedAutosyncState(root string, update func(*autosync.State)) error {
 	home, err := autosyncHomeDir()
 	if err != nil {
 		return nil
@@ -459,6 +474,6 @@ func recordManualSyncSuccess(root string) error {
 	} else if err != nil {
 		return err
 	}
-	state.RecordSuccess(autosyncNow())
+	update(&state)
 	return autosync.WriteState(managedPaths.StatePath, state)
 }

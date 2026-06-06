@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"flag"
@@ -20,6 +21,8 @@ import (
 )
 
 const defaultAutosyncInterval = 15 * time.Minute
+
+var errAutosyncNotLoaded = errors.New("auto-sync LaunchAgent is not loaded")
 
 var (
 	autosyncExecutable = os.Executable
@@ -101,6 +104,17 @@ func runAutosyncEnable(args []string, stdout, stderr io.Writer) error {
 	if err := verifyAutosyncOwnership(managedPaths, true); err != nil {
 		return err
 	}
+	loaded, err := autosyncLoaded(managedPaths.Label)
+	if err != nil {
+		return fmt.Errorf("inspect existing auto-sync LaunchAgent: %w", err)
+	}
+	previous, err := captureAutosyncManagedFiles(managedPaths)
+	if err != nil {
+		return err
+	}
+	if loaded && !previous.plist.exists {
+		return fmt.Errorf("loaded auto-sync LaunchAgent %s has no managed plist to update safely", managedPaths.Label)
+	}
 	config := autosync.Config{
 		SchemaVersion:   autosync.SchemaVersion,
 		ManagedBy:       autosync.ManagedBy,
@@ -115,18 +129,20 @@ func runAutosyncEnable(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 	if err := autosync.WriteConfig(managedPaths.ConfigPath, config); err != nil {
-		return err
+		return rollbackAutosyncEnable(managedPaths, previous, false, err)
 	}
 	if err := writeAutosyncManagedFile(managedPaths.PlistPath, plist); err != nil {
-		return err
+		return rollbackAutosyncEnable(managedPaths, previous, false, err)
 	}
-	if autosyncLoaded(managedPaths.Label) {
+	if loaded {
 		if err := autosyncLaunchctl("bootout", autosyncServiceTarget(managedPaths.Label)); err != nil {
-			return fmt.Errorf("unload existing auto-sync LaunchAgent: %w", err)
+			return rollbackAutosyncEnable(managedPaths, previous, false,
+				fmt.Errorf("unload existing auto-sync LaunchAgent: %w", err))
 		}
 	}
 	if err := autosyncLaunchctl("bootstrap", autosyncDomainTarget(), managedPaths.PlistPath); err != nil {
-		return fmt.Errorf("load auto-sync LaunchAgent: %w", err)
+		return rollbackAutosyncEnable(managedPaths, previous, loaded,
+			fmt.Errorf("load auto-sync LaunchAgent: %w", err))
 	}
 	fmt.Fprintln(stdout, "Auto-sync enabled.")
 	fmt.Fprintf(stdout, "Root:           %s\n", managedPaths.Root)
@@ -146,7 +162,7 @@ func runAutosyncDisable(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	root, err := resolveAutosyncRoot(rootFlag)
+	root, err := resolveAutosyncManagedRoot(rootFlag)
 	if err != nil {
 		return err
 	}
@@ -167,10 +183,14 @@ func runAutosyncDisable(args []string, stdout, stderr io.Writer) error {
 		fmt.Fprintln(stdout, "Auto-sync is already disabled.")
 		return nil
 	}
-	if err := verifyAutosyncOwnership(managedPaths, false); err != nil {
+	if err := verifyAutosyncOwnership(managedPaths, true); err != nil {
 		return err
 	}
-	if autosyncLoaded(managedPaths.Label) {
+	loaded, err := autosyncLoaded(managedPaths.Label)
+	if err != nil {
+		return fmt.Errorf("inspect auto-sync LaunchAgent: %w", err)
+	}
+	if loaded {
 		if err := autosyncLaunchctl("bootout", autosyncServiceTarget(managedPaths.Label)); err != nil {
 			return fmt.Errorf("unload auto-sync LaunchAgent: %w", err)
 		}
@@ -193,7 +213,7 @@ func runAutosyncStatus(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	root, err := resolveAutosyncRoot(rootFlag)
+	root, err := resolveAutosyncManagedRoot(rootFlag)
 	if err != nil {
 		return err
 	}
@@ -215,15 +235,26 @@ func runAutosyncStatus(args []string, stdout, stderr io.Writer) error {
 		fmt.Fprintf(stdout, "Root:          %s\n", managedPaths.Root)
 		return nil
 	}
-	if err := verifyAutosyncOwnership(managedPaths, false); err != nil {
+	if err := verifyAutosyncOwnership(managedPaths, true); err != nil {
 		return err
 	}
 	config, err := autosync.LoadConfig(managedPaths.ConfigPath)
 	if err != nil {
 		return err
 	}
+	loaded, err := autosyncLoaded(managedPaths.Label)
+	if err != nil {
+		return fmt.Errorf("inspect auto-sync LaunchAgent: %w", err)
+	}
 	fmt.Fprintln(stdout, "Auto-sync:     enabled")
-	fmt.Fprintf(stdout, "Loaded:        %s\n", yesNo(autosyncLoaded(managedPaths.Label)))
+	fmt.Fprintf(stdout, "Loaded:        %s\n", yesNo(loaded))
+	if _, err := os.Stat(managedPaths.PlistPath); errors.Is(err, os.ErrNotExist) {
+		fmt.Fprintln(stdout, "LaunchAgent:   missing")
+	} else if err != nil {
+		return err
+	} else {
+		fmt.Fprintln(stdout, "LaunchAgent:   present")
+	}
 	fmt.Fprintf(stdout, "Root:          %s\n", managedPaths.Root)
 	fmt.Fprintf(stdout, "Interval:      %s\n", time.Duration(config.IntervalSeconds)*time.Second)
 	fmt.Fprintf(stdout, "Binary:        %s\n", config.Binary)
@@ -269,14 +300,22 @@ func parseAutosyncRootOnly(name string, args []string, stderr io.Writer) (string
 }
 
 func resolveAutosyncRoot(rootFlag string) (string, error) {
+	root, err := resolveAutosyncManagedRoot(rootFlag)
+	if err != nil {
+		return "", err
+	}
+	if err := requireBacklotArchiveRoot(root); err != nil {
+		return "", err
+	}
+	return root, nil
+}
+
+func resolveAutosyncManagedRoot(rootFlag string) (string, error) {
 	root, err := paths.BacklotRoot(rootFlag)
 	if err != nil {
 		return "", err
 	}
 	if err := ensureRootOutsideCurrentProject(root); err != nil {
-		return "", err
-	}
-	if err := requireBacklotArchiveRoot(root); err != nil {
 		return "", err
 	}
 	return root, nil
@@ -335,17 +374,33 @@ func verifyAutosyncOwnership(managedPaths autosync.Paths, allowMissing bool) err
 	if err := autosync.ValidateManagedConfig(config, managedPaths); err != nil {
 		return err
 	}
-	for _, path := range []string{managedPaths.ConfigPath, managedPaths.PlistPath} {
-		info, err := os.Lstat(path)
-		if errors.Is(err, os.ErrNotExist) && allowMissing && path == managedPaths.PlistPath {
-			continue
-		}
-		if err != nil {
-			return err
-		}
-		if !info.Mode().IsRegular() {
-			return fmt.Errorf("managed auto-sync file %s is not a regular file", path)
-		}
+	info, err := os.Lstat(managedPaths.ConfigPath)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("managed auto-sync file %s is not a regular file", managedPaths.ConfigPath)
+	}
+	info, err = os.Lstat(managedPaths.PlistPath)
+	if errors.Is(err, os.ErrNotExist) && allowMissing {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("managed auto-sync file %s is not a regular file", managedPaths.PlistPath)
+	}
+	expected, err := autosync.RenderLaunchAgent(managedPaths, config)
+	if err != nil {
+		return err
+	}
+	actual, err := os.ReadFile(managedPaths.PlistPath)
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(actual, expected) {
+		return fmt.Errorf("auto-sync LaunchAgent %s is not managed by Backlot", managedPaths.PlistPath)
 	}
 	return nil
 }
@@ -388,8 +443,74 @@ func writeAutosyncManagedFile(path string, data []byte) error {
 	return os.Rename(tmpPath, path)
 }
 
-func autosyncLoaded(label string) bool {
-	return autosyncLaunchctl("print", autosyncServiceTarget(label)) == nil
+type autosyncFileSnapshot struct {
+	path   string
+	data   []byte
+	exists bool
+}
+
+type autosyncManagedSnapshot struct {
+	config autosyncFileSnapshot
+	plist  autosyncFileSnapshot
+}
+
+func captureAutosyncManagedFiles(managedPaths autosync.Paths) (autosyncManagedSnapshot, error) {
+	config, err := captureAutosyncFile(managedPaths.ConfigPath)
+	if err != nil {
+		return autosyncManagedSnapshot{}, err
+	}
+	plist, err := captureAutosyncFile(managedPaths.PlistPath)
+	if err != nil {
+		return autosyncManagedSnapshot{}, err
+	}
+	return autosyncManagedSnapshot{config: config, plist: plist}, nil
+}
+
+func captureAutosyncFile(path string) (autosyncFileSnapshot, error) {
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return autosyncFileSnapshot{path: path}, nil
+	}
+	if err != nil {
+		return autosyncFileSnapshot{}, err
+	}
+	return autosyncFileSnapshot{path: path, data: data, exists: true}, nil
+}
+
+func rollbackAutosyncEnable(managedPaths autosync.Paths, previous autosyncManagedSnapshot, reloadPrevious bool, cause error) error {
+	if err := restoreAutosyncFile(previous.config); err != nil {
+		return fmt.Errorf("%w; restore previous auto-sync configuration: %v", cause, err)
+	}
+	if err := restoreAutosyncFile(previous.plist); err != nil {
+		return fmt.Errorf("%w; restore previous auto-sync LaunchAgent: %v", cause, err)
+	}
+	if reloadPrevious && previous.plist.exists {
+		if err := autosyncLaunchctl("bootstrap", autosyncDomainTarget(), managedPaths.PlistPath); err != nil {
+			return fmt.Errorf("%w; reload previous auto-sync LaunchAgent: %v", cause, err)
+		}
+	}
+	return cause
+}
+
+func restoreAutosyncFile(snapshot autosyncFileSnapshot) error {
+	if snapshot.exists {
+		return writeAutosyncManagedFile(snapshot.path, snapshot.data)
+	}
+	if err := os.Remove(snapshot.path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
+func autosyncLoaded(label string) (bool, error) {
+	err := autosyncLaunchctl("print", autosyncServiceTarget(label))
+	if err == nil {
+		return true, nil
+	}
+	if errors.Is(err, errAutosyncNotLoaded) {
+		return false, nil
+	}
+	return false, err
 }
 
 func autosyncDomainTarget() string {
@@ -405,6 +526,10 @@ func runLaunchctl(args ...string) error {
 	defer cancel()
 	output, err := exec.CommandContext(ctx, "/bin/launchctl", args...).CombinedOutput()
 	if err != nil {
+		var exitErr *exec.ExitError
+		if len(args) > 0 && args[0] == "print" && errors.As(err, &exitErr) && exitErr.ExitCode() == 113 {
+			return errAutosyncNotLoaded
+		}
 		return fmt.Errorf("launchctl %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(output)))
 	}
 	return nil

@@ -29,7 +29,7 @@ func TestAutosyncEnableStatusDisable(t *testing.T) {
 			if loaded {
 				return nil
 			}
-			return errors.New("not loaded")
+			return errAutosyncNotLoaded
 		case "bootstrap":
 			loaded = true
 			return nil
@@ -110,7 +110,7 @@ func TestAutosyncEnableValidatesIntervalAndConflictState(t *testing.T) {
 	if err := os.WriteFile(binary, []byte("binary"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	restore := stubAutosyncCommandEnvironment(t, home, binary, func(...string) error { return errors.New("not loaded") })
+	restore := stubAutosyncCommandEnvironment(t, home, binary, func(...string) error { return errAutosyncNotLoaded })
 	defer restore()
 
 	root := filepath.Join(t.TempDir(), "state")
@@ -142,7 +142,7 @@ func TestAutosyncRefusesForeignManagedFiles(t *testing.T) {
 	if err := os.WriteFile(binary, []byte("binary"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	restore := stubAutosyncCommandEnvironment(t, home, binary, func(...string) error { return errors.New("not loaded") })
+	restore := stubAutosyncCommandEnvironment(t, home, binary, func(...string) error { return errAutosyncNotLoaded })
 	defer restore()
 
 	managedPaths, err := autosync.ResolvePaths(home, root)
@@ -163,6 +163,275 @@ func TestAutosyncRefusesForeignManagedFiles(t *testing.T) {
 	if !strings.Contains(errOut.String(), "not managed by Backlot") {
 		t.Fatalf("foreign plist stderr = %q", errOut.String())
 	}
+
+	writeManagedAutosyncConfig(t, home, root)
+	if err := os.WriteFile(managedPaths.PlistPath, []byte("replacement"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	errOut.Reset()
+	if code := Run([]string{"autosync", "disable", "--root", root}, &out, &errOut); code == 0 {
+		t.Fatalf("autosync disable removed replacement plist, stdout = %s", out.String())
+	}
+	if !strings.Contains(errOut.String(), "not managed by Backlot") {
+		t.Fatalf("replacement plist stderr = %q", errOut.String())
+	}
+	data, err := os.ReadFile(managedPaths.PlistPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "replacement" {
+		t.Fatalf("replacement plist was modified: %q", data)
+	}
+}
+
+func TestAutosyncDisableRefusesLaunchctlInspectionFailure(t *testing.T) {
+	home := t.TempDir()
+	root := filepath.Join(t.TempDir(), "state")
+	mustRunBacklotInit(t, root)
+	binary := filepath.Join(t.TempDir(), "backlot")
+	if err := os.WriteFile(binary, []byte("binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	restore := stubAutosyncCommandEnvironment(t, home, binary, func(args ...string) error {
+		if args[0] == "print" {
+			return errors.New("launchctl permission denied")
+		}
+		return nil
+	})
+	defer restore()
+	writeManagedAutosyncConfig(t, home, root)
+	managedPaths, err := autosync.ResolvePaths(home, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeManagedAutosyncPlist(t, managedPaths)
+
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"autosync", "disable", "--root", root}, &out, &errOut); code == 0 {
+		t.Fatalf("autosync disable succeeded after launchctl inspection failure, stdout = %s", out.String())
+	}
+	if !strings.Contains(errOut.String(), "inspect auto-sync LaunchAgent") {
+		t.Fatalf("disable stderr = %q, want inspection failure", errOut.String())
+	}
+	if _, err := os.Stat(managedPaths.PlistPath); err != nil {
+		t.Fatalf("disable removed plist after inspection failure: %v", err)
+	}
+}
+
+func TestAutosyncEnableInspectionFailureLeavesFilesUnchanged(t *testing.T) {
+	home := t.TempDir()
+	root := filepath.Join(t.TempDir(), "state")
+	mustRunBacklotInit(t, root)
+	binary := filepath.Join(t.TempDir(), "backlot")
+	if err := os.WriteFile(binary, []byte("binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeManagedAutosyncConfig(t, home, root)
+	managedPaths, err := autosync.ResolvePaths(home, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeManagedAutosyncPlist(t, managedPaths)
+	configBefore, err := os.ReadFile(managedPaths.ConfigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plistBefore, err := os.ReadFile(managedPaths.PlistPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restore := stubAutosyncCommandEnvironment(t, home, binary, func(args ...string) error {
+		if args[0] == "print" {
+			return errors.New("launchctl permission denied")
+		}
+		return nil
+	})
+	defer restore()
+
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"autosync", "enable", "--root", root, "--interval", "30m"}, &out, &errOut); code == 0 {
+		t.Fatalf("autosync enable succeeded after launchctl inspection failure, stdout = %s", out.String())
+	}
+	configAfter, err := os.ReadFile(managedPaths.ConfigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plistAfter, err := os.ReadFile(managedPaths.PlistPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(configAfter, configBefore) || !bytes.Equal(plistAfter, plistBefore) {
+		t.Fatal("autosync enable changed managed files before launchctl inspection succeeded")
+	}
+}
+
+func TestAutosyncReenableBootoutFailureRollsBackFiles(t *testing.T) {
+	home := t.TempDir()
+	root := filepath.Join(t.TempDir(), "state")
+	mustRunBacklotInit(t, root)
+	binary := filepath.Join(t.TempDir(), "backlot")
+	if err := os.WriteFile(binary, []byte("binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeManagedAutosyncConfig(t, home, root)
+	managedPaths, err := autosync.ResolvePaths(home, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeManagedAutosyncPlist(t, managedPaths)
+	configBefore, err := os.ReadFile(managedPaths.ConfigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plistBefore, err := os.ReadFile(managedPaths.PlistPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restore := stubAutosyncCommandEnvironment(t, home, binary, func(args ...string) error {
+		if args[0] == "bootout" {
+			return errors.New("launchctl bootout denied")
+		}
+		return nil
+	})
+	defer restore()
+
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"autosync", "enable", "--root", root, "--interval", "30m"}, &out, &errOut); code == 0 {
+		t.Fatalf("autosync re-enable succeeded after bootout failure, stdout = %s", out.String())
+	}
+	configAfter, err := os.ReadFile(managedPaths.ConfigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plistAfter, err := os.ReadFile(managedPaths.PlistPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(configAfter, configBefore) || !bytes.Equal(plistAfter, plistBefore) {
+		t.Fatal("autosync re-enable did not roll back managed files after bootout failure")
+	}
+}
+
+func TestAutosyncDisableCleansConfigOnlyPartialEnable(t *testing.T) {
+	home := t.TempDir()
+	root := filepath.Join(t.TempDir(), "state")
+	mustRunBacklotInit(t, root)
+	binary := filepath.Join(t.TempDir(), "backlot")
+	if err := os.WriteFile(binary, []byte("binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	restore := stubAutosyncCommandEnvironment(t, home, binary, func(args ...string) error {
+		if args[0] == "print" {
+			return errAutosyncNotLoaded
+		}
+		return nil
+	})
+	defer restore()
+	writeManagedAutosyncConfig(t, home, root)
+	managedPaths, err := autosync.ResolvePaths(home, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"autosync", "status", "--root", root}, &out, &errOut); code != 0 {
+		t.Fatalf("autosync status config-only exit code = %d, stderr = %s", code, errOut.String())
+	}
+	if !strings.Contains(out.String(), "LaunchAgent:   missing") || !strings.Contains(out.String(), "Loaded:        no") {
+		t.Fatalf("config-only status output = %q, want missing and unloaded", out.String())
+	}
+	out.Reset()
+	errOut.Reset()
+	if code := Run([]string{"autosync", "disable", "--root", root}, &out, &errOut); code != 0 {
+		t.Fatalf("autosync disable config-only exit code = %d, stderr = %s", code, errOut.String())
+	}
+	if _, err := os.Stat(managedPaths.RuntimeDir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("runtime still exists after config-only disable: %v", err)
+	}
+}
+
+func TestAutosyncStatusAndDisableWorkAfterArchiveRemoved(t *testing.T) {
+	home := t.TempDir()
+	root := filepath.Join(t.TempDir(), "state")
+	mustRunBacklotInit(t, root)
+	binary := filepath.Join(t.TempDir(), "backlot")
+	if err := os.WriteFile(binary, []byte("binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	restore := stubAutosyncCommandEnvironment(t, home, binary, func(args ...string) error {
+		if args[0] == "print" {
+			return errAutosyncNotLoaded
+		}
+		return nil
+	})
+	defer restore()
+	writeManagedAutosyncConfig(t, home, root)
+	managedPaths, err := autosync.ResolvePaths(home, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeManagedAutosyncPlist(t, managedPaths)
+	if err := os.RemoveAll(root); err != nil {
+		t.Fatal(err)
+	}
+
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"autosync", "status", "--root", root}, &out, &errOut); code != 0 {
+		t.Fatalf("autosync status missing archive exit code = %d, stderr = %s", code, errOut.String())
+	}
+	if !strings.Contains(out.String(), "Auto-sync:     enabled") {
+		t.Fatalf("missing archive status output = %q", out.String())
+	}
+	out.Reset()
+	errOut.Reset()
+	if code := Run([]string{"autosync", "disable", "--root", root}, &out, &errOut); code != 0 {
+		t.Fatalf("autosync disable missing archive exit code = %d, stderr = %s", code, errOut.String())
+	}
+	if _, err := os.Stat(managedPaths.RuntimeDir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("runtime still exists after missing archive disable: %v", err)
+	}
+}
+
+func TestDoctorReportsConfiguredButUnloadedAutosync(t *testing.T) {
+	home := t.TempDir()
+	root := filepath.Join(t.TempDir(), "state")
+	mustRunBacklotInit(t, root)
+	binary := filepath.Join(t.TempDir(), "backlot")
+	if err := os.WriteFile(binary, []byte("binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	restore := stubAutosyncCommandEnvironment(t, home, binary, func(args ...string) error {
+		if args[0] == "print" {
+			return errAutosyncNotLoaded
+		}
+		return nil
+	})
+	defer restore()
+	writeManagedAutosyncConfig(t, home, root)
+	managedPaths, err := autosync.ResolvePaths(home, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeManagedAutosyncPlist(t, managedPaths)
+
+	public := filepath.Join(t.TempDir(), "public")
+	mustRunGit(t, filepath.Dir(public), "init", public)
+	mustRunGit(t, public, "remote", "add", "origin", "git@github.com:massivemoose/ovek.git")
+	withChdir(t, public, func() {
+		var out, errOut bytes.Buffer
+		if code := Run([]string{"attach", "--root", root}, &out, &errOut); code != 0 {
+			t.Fatalf("attach exit code = %d, stderr = %s", code, errOut.String())
+		}
+		out.Reset()
+		errOut.Reset()
+		if code := Run([]string{"doctor", "--root", root}, &out, &errOut); code == 0 {
+			t.Fatalf("doctor succeeded with unloaded autosync, stdout = %s", out.String())
+		}
+		if !strings.Contains(out.String(), "Auto-sync LaunchAgent is not loaded") {
+			t.Fatalf("doctor output = %q, want unloaded autosync failure", out.String())
+		}
+	})
 }
 
 func TestStatusAndDoctorReportPausedAutosync(t *testing.T) {
@@ -173,12 +442,7 @@ func TestStatusAndDoctorReportPausedAutosync(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(filepath.Dir(managedPaths.PlistPath), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(managedPaths.PlistPath, []byte("managed"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	writeManagedAutosyncPlist(t, managedPaths)
 	binary := filepath.Join(t.TempDir(), "backlot")
 	if err := os.WriteFile(binary, []byte("binary"), 0o755); err != nil {
 		t.Fatal(err)
@@ -233,6 +497,64 @@ func TestStatusAndDoctorReportPausedAutosync(t *testing.T) {
 			}
 		}
 	})
+}
+
+func TestAutosyncHealthReportsPausedAndUnloaded(t *testing.T) {
+	home := t.TempDir()
+	root := filepath.Join(t.TempDir(), "state")
+	mustRunBacklotInit(t, root)
+	writeManagedAutosyncConfig(t, home, root)
+	managedPaths, err := autosync.ResolvePaths(home, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := autosync.WriteState(managedPaths.StatePath, autosync.State{
+		Result:          autosync.ResultFailed,
+		PausedReason:    autosync.PauseConflict,
+		RecoveryCommand: "backlot sync",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	restore := stubAutosyncCommandEnvironment(t, home, filepath.Join(t.TempDir(), "backlot"), func(args ...string) error {
+		if args[0] == "print" {
+			return errAutosyncNotLoaded
+		}
+		return nil
+	})
+	defer restore()
+
+	health, err := collectAutosyncHealth(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"paused: conflict", "not loaded"} {
+		if !strings.Contains(health.Summary, want) {
+			t.Fatalf("health summary = %q, want %q", health.Summary, want)
+		}
+	}
+	for _, want := range []string{"backlot sync", "backlot autosync enable"} {
+		if !strings.Contains(health.Recovery, want) {
+			t.Fatalf("health recovery = %q, want %q", health.Recovery, want)
+		}
+	}
+}
+
+func writeManagedAutosyncPlist(t *testing.T, managedPaths autosync.Paths) {
+	t.Helper()
+	config, err := autosync.LoadConfig(managedPaths.ConfigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plist, err := autosync.RenderLaunchAgent(managedPaths, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(managedPaths.PlistPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(managedPaths.PlistPath, plist, 0o600); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func stubAutosyncCommandEnvironment(t *testing.T, home, binary string, launchctl func(...string) error) func() {

@@ -18,6 +18,7 @@ var (
 	autosyncHomeDir     = os.UserHomeDir
 	autosyncNow         = time.Now
 	autosyncNotify      = notifyMacOS
+	autosyncWriteLog    = writeAutosyncLog
 	autosyncAbortRebase = func(root string) error {
 		_, err := gitutil.RunGit(root, "rebase", "--abort")
 		return err
@@ -25,9 +26,6 @@ var (
 )
 
 func runManagedAutosync(root string) error {
-	if err := requireBacklotArchiveRoot(root); err != nil {
-		return err
-	}
 	home, err := autosyncHomeDir()
 	if err != nil {
 		return err
@@ -36,16 +34,34 @@ func runManagedAutosync(root string) error {
 	if err != nil {
 		return err
 	}
-	config, err := autosync.LoadConfig(managedPaths.ConfigPath)
+	if err := requireBacklotArchiveRoot(managedPaths.Root); err != nil {
+		state, _ := loadManagedAutosyncState(managedPaths.StatePath)
+		return recordManagedFailure(managedPaths, &state, "archive", err, autosyncNow())
+	}
+	release, err := acquireSyncLock(managedPaths.Root)
+	if errors.Is(err, errSyncBusy) {
+		return nil
+	}
 	if err != nil {
-		return err
+		state, _ := loadManagedAutosyncState(managedPaths.StatePath)
+		return recordManagedFailure(managedPaths, &state, "lock", err, autosyncNow())
 	}
-	if err := autosync.ValidateManagedConfig(config, managedPaths); err != nil {
-		return err
-	}
+	defer release()
+
 	state, err := loadManagedAutosyncState(managedPaths.StatePath)
 	if err != nil {
-		return err
+		state = autosync.State{}
+		return recordManagedFailure(managedPaths, &state, "state", err, autosyncNow())
+	}
+	config, err := autosync.LoadConfig(managedPaths.ConfigPath)
+	if err != nil {
+		return recordManagedFailure(managedPaths, &state, "configuration", err, autosyncNow())
+	}
+	if err := autosync.ValidateManagedConfig(config, managedPaths); err != nil {
+		return recordManagedFailure(managedPaths, &state, "configuration", err, autosyncNow())
+	}
+	if err := requireBacklotArchiveRoot(managedPaths.Root); err != nil {
+		return recordManagedFailure(managedPaths, &state, "archive", err, autosyncNow())
 	}
 	now := autosyncNow()
 	if state.Paused() {
@@ -53,23 +69,14 @@ func runManagedAutosync(root string) error {
 		return autosync.WriteState(managedPaths.StatePath, state)
 	}
 
-	release, err := acquireSyncLock(managedPaths.Root)
-	if errors.Is(err, errSyncBusy) {
-		state.RecordSkippedBusy(now)
-		return autosync.WriteState(managedPaths.StatePath, state)
-	}
-	if err != nil {
-		return err
-	}
-	defer release()
-
 	err = runNormalSync(managedPaths.Root, "Update backlot state", io.Discard, true)
 	if err == nil {
 		state.RecordSuccess(now)
 		if err := autosync.WriteState(managedPaths.StatePath, state); err != nil {
 			return err
 		}
-		return removeAutosyncLog(managedPaths.LogPath)
+		_ = removeAutosyncLog(managedPaths.LogPath)
+		return nil
 	}
 
 	var failure *syncFailure
@@ -80,21 +87,7 @@ func runManagedAutosync(root string) error {
 	if errors.As(err, &failure) && failure.Category != "" {
 		category = failure.Category
 	}
-	notify := state.RecordFailure(now, category, err.Error())
-	if writeErr := writeAutosyncLog(managedPaths.LogPath, err.Error()); writeErr != nil {
-		return writeErr
-	}
-	if err := autosync.WriteState(managedPaths.StatePath, state); err != nil {
-		return err
-	}
-	if notify {
-		return sendManagedNotification(managedPaths, &state,
-			"Backlot auto-sync needs attention",
-			fmt.Sprintf("Backlot auto-sync for %s has failed %d times. Run: backlot autosync status --root %s", managedPaths.Root, state.ConsecutiveFailures, managedPaths.Root),
-			now,
-		)
-	}
-	return nil
+	return recordManagedFailure(managedPaths, &state, category, err, now)
 }
 
 func handleManagedConflict(managedPaths autosync.Paths, state autosync.State, failure *syncFailure, now time.Time) error {
@@ -109,14 +102,28 @@ func handleManagedConflict(managedPaths autosync.Paths, state autosync.State, fa
 			fmt.Sprintf("automatic rebase abort failed: %v", abortErr), "backlot sync --abort")
 		message = "Backlot auto-sync hit a conflict and could not clean it up.\nRun: backlot sync --abort"
 	}
-	if err := writeAutosyncLog(managedPaths.LogPath, failure.Error()); err != nil {
-		return err
-	}
 	if err := autosync.WriteState(managedPaths.StatePath, state); err != nil {
 		return err
 	}
+	_ = autosyncWriteLog(managedPaths.LogPath, failure.Error())
 	if notify {
 		return sendManagedNotification(managedPaths, &state, "Backlot auto-sync paused", message, now)
+	}
+	return nil
+}
+
+func recordManagedFailure(managedPaths autosync.Paths, state *autosync.State, category string, failure error, now time.Time) error {
+	notify := state.RecordFailure(now, category, failure.Error())
+	if err := autosync.WriteState(managedPaths.StatePath, *state); err != nil {
+		return err
+	}
+	_ = autosyncWriteLog(managedPaths.LogPath, failure.Error())
+	if notify {
+		return sendManagedNotification(managedPaths, state,
+			"Backlot auto-sync needs attention",
+			fmt.Sprintf("Backlot auto-sync for %s has failed %d times. Run: backlot autosync status --root %s", managedPaths.Root, state.ConsecutiveFailures, managedPaths.Root),
+			now,
+		)
 	}
 	return nil
 }

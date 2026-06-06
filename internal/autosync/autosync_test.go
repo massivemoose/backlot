@@ -38,6 +38,24 @@ func TestResolvePathsUsesStableCanonicalRootIdentity(t *testing.T) {
 	}
 }
 
+func TestResolvePathsAllowsMissingRoot(t *testing.T) {
+	home := t.TempDir()
+	root := filepath.Join(t.TempDir(), "missing")
+
+	paths, err := ResolvePaths(home, root)
+	if err != nil {
+		t.Fatalf("ResolvePaths returned error for missing root: %v", err)
+	}
+	parent, err := filepath.EvalSymlinks(filepath.Dir(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(parent, filepath.Base(root))
+	if paths.Root != want {
+		t.Fatalf("root = %q, want %q", paths.Root, want)
+	}
+}
+
 func TestConfigRoundTripAndManagedOwnership(t *testing.T) {
 	paths, err := ResolvePaths(t.TempDir(), t.TempDir())
 	if err != nil {
@@ -121,6 +139,9 @@ func TestStateConflictPausesOnceAndSuccessClearsFailures(t *testing.T) {
 	state.RecordSuccess(now.Add(2 * time.Minute))
 	if state.PausedReason != "" || state.ConsecutiveFailures != 0 || state.FailureCategory != "" {
 		t.Fatalf("RecordSuccess did not clear failure state: %+v", state)
+	}
+	if !state.LastNotification.IsZero() || state.LastNotificationError != "" || state.LastNotificationCategory != "" {
+		t.Fatalf("RecordSuccess did not clear previous alert state: %+v", state)
 	}
 	if state.LastSuccess.IsZero() {
 		t.Fatal("RecordSuccess did not set LastSuccess")
