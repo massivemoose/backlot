@@ -96,6 +96,17 @@ func runDoctor(args []string, stdout, stderr io.Writer) error {
 				fmt.Fprintf(stdout, "  Recovery: %s or backlot sync --abort\n", syncRecoverySummary())
 			}
 		}
+		if health, err := collectAutosyncHealth(root); err != nil {
+			failCheck("Auto-sync configuration is valid")
+			fmt.Fprintf(stdout, "  Error: %v\n", err)
+		} else if health.Problem != "" {
+			failCheck(health.Problem)
+			if health.Recovery != "" {
+				fmt.Fprintf(stdout, "  Recovery: %s\n", health.Recovery)
+			}
+		} else if health.Enabled {
+			info(stdout, "Auto-sync: enabled")
+		}
 	} else {
 		failCheck("Backlot root exists")
 		failCheck("Backlot root is a Git repo")

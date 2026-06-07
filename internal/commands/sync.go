@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/massivemoose/backlot/internal/autosync"
 	"github.com/massivemoose/backlot/internal/gitutil"
 	"github.com/massivemoose/backlot/internal/paths"
 )
@@ -17,7 +18,7 @@ func runSync(args []string, stdout, stderr io.Writer) error {
 	fs := newFlagSet("sync", stderr)
 	fs.Usage = func() {
 		fmt.Fprintln(stderr, "Usage:")
-		fmt.Fprintln(stderr, "  backlot sync [--root PATH] [-m MESSAGE]")
+		fmt.Fprintln(stderr, "  backlot sync [--root PATH] [-m MESSAGE] [--quiet]")
 		fmt.Fprintln(stderr, "  backlot sync [--root PATH] --continue")
 		fmt.Fprintln(stderr, "  backlot sync [--root PATH] --abort")
 		fmt.Fprintln(stderr)
@@ -33,6 +34,7 @@ func runSync(args []string, stdout, stderr io.Writer) error {
 	message := fs.String("m", "Update backlot state", "commit message")
 	continueFlag := fs.Bool("continue", false, "continue an interrupted Backlot sync")
 	abortFlag := fs.Bool("abort", false, "abort an interrupted Backlot sync")
+	quiet := fs.Bool("quiet", false, "suppress normal sync output")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -62,12 +64,30 @@ func runSync(args []string, stdout, stderr io.Writer) error {
 	if err := requireBacklotArchiveRoot(root); err != nil {
 		return err
 	}
+	release, err := acquireSyncLock(root)
+	if err != nil {
+		return err
+	}
+	defer release()
 	if *abortFlag {
-		return runSyncAbort(root, stdout)
+		if err := runSyncAbort(root, stdout, *quiet); err != nil {
+			return err
+		}
+		return recordManualSyncAbort(root)
 	}
 	if *continueFlag {
-		return runSyncContinue(root, stdout)
+		if err := runSyncContinue(root, stdout, *quiet); err != nil {
+			return err
+		}
+		return recordManualSyncSuccess(root)
 	}
+	if err := runNormalSync(root, *message, stdout, *quiet); err != nil {
+		return err
+	}
+	return recordManualSyncSuccess(root)
+}
+
+func runNormalSync(root, message string, stdout io.Writer, quiet bool) error {
 	if stateDir, ok := currentAttachedProjectStateDir(root); ok {
 		if err := ensureProjectMarker(stateDir); err != nil {
 			return err
@@ -91,14 +111,14 @@ func runSync(args []string, stdout, stderr io.Writer) error {
 
 	if !dirty {
 		if !hasOrigin {
-			fmt.Fprintln(stdout, "Backlot state is clean.")
+			syncPrintln(stdout, quiet, "Backlot state is clean.")
 			return nil
 		}
 		if !upstream {
 			if err := pushFirstUpstream(root); err != nil {
 				return err
 			}
-			fmt.Fprintln(stdout, "Backlot state synced.")
+			syncPrintln(stdout, quiet, "Backlot state synced.")
 			return nil
 		}
 		if _, err := gitutil.RunGit(root, "pull", "--rebase"); err != nil {
@@ -107,31 +127,36 @@ func runSync(args []string, stdout, stderr io.Writer) error {
 		if _, err := gitutil.RunGit(root, "push"); err != nil {
 			return syncGitError("push", root, err)
 		}
-		fmt.Fprintln(stdout, "Backlot state synced.")
+		syncPrintln(stdout, quiet, "Backlot state synced.")
 		return nil
 	}
 
 	if _, err := gitutil.RunGit(root, "add", "-A"); err != nil {
 		return syncGitError("staging private state", root, err)
 	}
-	if _, err := gitutil.RunGit(root, "commit", "-m", *message); err != nil {
-		if !isNothingToCommit(err) {
+	staged, err := gitutil.HasStagedChanges(root)
+	if err != nil {
+		return syncGitError("staged change check", root, err)
+	}
+	if staged {
+		if _, err := gitutil.RunGit(root, "commit", "-m", message); err != nil {
 			return syncGitError("committing private state", root, err)
 		}
+	} else {
 		if !hasOrigin {
-			fmt.Fprintln(stdout, "Backlot state is clean.")
+			syncPrintln(stdout, quiet, "Backlot state is clean.")
 			return nil
 		}
 	}
 	if !hasOrigin {
-		fmt.Fprintln(stdout, "No origin remote configured; committed locally and skipped push.")
+		syncPrintln(stdout, quiet, "No origin remote configured; committed locally and skipped push.")
 		return nil
 	}
 	if !upstream {
 		if err := pushFirstUpstream(root); err != nil {
 			return err
 		}
-		fmt.Fprintln(stdout, "Backlot state synced.")
+		syncPrintln(stdout, quiet, "Backlot state synced.")
 		return nil
 	}
 	if _, err := gitutil.RunGit(root, "pull", "--rebase"); err != nil {
@@ -140,11 +165,11 @@ func runSync(args []string, stdout, stderr io.Writer) error {
 	if _, err := gitutil.RunGit(root, "push"); err != nil {
 		return syncGitError("push", root, err)
 	}
-	fmt.Fprintln(stdout, "Backlot state synced.")
+	syncPrintln(stdout, quiet, "Backlot state synced.")
 	return nil
 }
 
-func runSyncAbort(root string, stdout io.Writer) error {
+func runSyncAbort(root string, stdout io.Writer, quiet bool) error {
 	state, err := detectSyncState(root)
 	if err != nil {
 		return err
@@ -155,11 +180,11 @@ func runSyncAbort(root string, stdout io.Writer) error {
 	if _, err := gitutil.RunGit(root, "rebase", "--abort"); err != nil {
 		return syncGitError("rebase --abort", root, err)
 	}
-	fmt.Fprintln(stdout, "Backlot sync aborted.")
+	syncPrintln(stdout, quiet, "Backlot sync aborted.")
 	return nil
 }
 
-func runSyncContinue(root string, stdout io.Writer) error {
+func runSyncContinue(root string, stdout io.Writer, quiet bool) error {
 	state, err := detectSyncState(root)
 	if err != nil {
 		return err
@@ -176,12 +201,19 @@ func runSyncContinue(root string, stdout io.Writer) error {
 	if _, err := gitutil.RunGit(root, "push"); err != nil {
 		return syncGitError("push", root, err)
 	}
-	fmt.Fprintln(stdout, "Backlot state synced.")
+	syncPrintln(stdout, quiet, "Backlot state synced.")
 	return nil
+}
+
+func syncPrintln(stdout io.Writer, quiet bool, text string) {
+	if !quiet {
+		fmt.Fprintln(stdout, text)
+	}
 }
 
 type syncState struct {
 	InProgress bool
+	Operation  string
 	Conflicts  []string
 }
 
@@ -231,12 +263,45 @@ func currentBranch(root string) (string, error) {
 	return branch, nil
 }
 
+type syncFailure struct {
+	Category   string
+	Conflict   bool
+	Conflicts  []string
+	Operation  string
+	LocalHead  string
+	RemoteHead string
+	err        error
+}
+
+func (e *syncFailure) Error() string {
+	return e.err.Error()
+}
+
+func (e *syncFailure) Unwrap() error {
+	return e.err
+}
+
 func syncGitError(operation string, root string, err error) error {
-	return fmt.Errorf("%s failed while syncing Backlot root %s: %w", operation, root, err)
+	return &syncFailure{
+		Category: operation,
+		err:      fmt.Errorf("%s failed while syncing Backlot root %s: %w", operation, root, err),
+	}
 }
 
 func syncRebaseError(root string, err error) error {
-	return fmt.Errorf("%w\n\n%s", syncGitError("pull --rebase", root, err), syncRecoveryInstructions(root))
+	failure := &syncFailure{
+		Category: "pull --rebase",
+		err:      fmt.Errorf("%w\n\n%s", syncGitError("pull --rebase", root, err), syncRecoveryInstructions(root)),
+	}
+	state, stateErr := detectSyncState(root)
+	if stateErr == nil {
+		failure.Operation = state.Operation
+		failure.Conflicts = append([]string(nil), state.Conflicts...)
+		failure.Conflict = state.Operation == "rebase" && len(state.Conflicts) > 0
+	}
+	failure.LocalHead, _ = gitutil.RunGit(root, "rev-parse", "ORIG_HEAD")
+	failure.RemoteHead, _ = gitutil.RunGit(root, "rev-parse", "@{u}")
+	return failure
 }
 
 func syncRecoveryInstructions(root string) string {
@@ -345,6 +410,16 @@ func detectSyncState(root string) (syncState, error) {
 		}
 		if _, err := os.Stat(path); err == nil {
 			state.InProgress = true
+			switch name {
+			case "rebase-apply", "rebase-merge":
+				state.Operation = "rebase"
+			case "MERGE_HEAD":
+				state.Operation = "merge"
+			case "CHERRY_PICK_HEAD":
+				state.Operation = "cherry-pick"
+			case "REVERT_HEAD":
+				state.Operation = "revert"
+			}
 		} else if !errors.Is(err, os.ErrNotExist) {
 			return state, err
 		}
@@ -362,10 +437,43 @@ func detectSyncState(root string) (syncState, error) {
 	return state, nil
 }
 
-func isNothingToCommit(err error) bool {
-	if err == nil {
-		return false
+func recordManualSyncSuccess(root string) error {
+	return updateManagedAutosyncState(root, func(state *autosync.State) {
+		state.RecordSuccess(autosyncNow())
+	})
+}
+
+func recordManualSyncAbort(root string) error {
+	return updateManagedAutosyncState(root, func(state *autosync.State) {
+		state.RecordAbortRecovery(autosyncNow())
+	})
+}
+
+func updateManagedAutosyncState(root string, update func(*autosync.State)) error {
+	home, err := autosyncHomeDir()
+	if err != nil {
+		return nil
 	}
-	text := err.Error()
-	return strings.Contains(text, "nothing to commit") || strings.Contains(text, "no changes added to commit")
+	managedPaths, err := autosync.ResolvePaths(home, root)
+	if err != nil {
+		return nil
+	}
+	config, err := autosync.LoadConfig(managedPaths.ConfigPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if err := autosync.ValidateManagedConfig(config, managedPaths); err != nil {
+		return err
+	}
+	state, err := autosync.LoadState(managedPaths.StatePath)
+	if errors.Is(err, os.ErrNotExist) {
+		state = autosync.State{}
+	} else if err != nil {
+		return err
+	}
+	update(&state)
+	return autosync.WriteState(managedPaths.StatePath, state)
 }

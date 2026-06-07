@@ -14,6 +14,7 @@ One private archive. Many projects. No nested Git repo sprawl.
 - [Install](#install)
 - [Quickstart](#quickstart)
 - [Syncing Across Machines](#syncing-across-machines)
+- [Automatic Sync On macOS](#automatic-sync-on-macos)
 - [How It Works](#how-it-works)
 - [Directory Layout](#directory-layout)
 - [Using Backlot With LLMs And Agents](#using-backlot-with-llms-and-agents)
@@ -132,6 +133,44 @@ backlot sync --abort
 
 Conflict resolution is manual for now so Backlot does not guess which private
 notes to keep.
+
+## Automatic Sync On macOS
+
+Auto-sync is an opt-in macOS LaunchAgent that runs the same two-way archive
+sync in the background. Enable it with a Go-style duration:
+
+```sh
+backlot autosync enable --interval 15m
+backlot autosync status
+```
+
+The first run starts immediately. Later runs skip intervals while the Mac is
+asleep or a previous run is still active. Archives without an `origin` are
+allowed, but auto-sync can only create local commits until a remote is added.
+
+An unattended conflict is handled differently from an interactive
+`backlot sync`: Backlot records the conflict, aborts the rebase to leave the
+archive clean, pauses future automatic runs, and sends one best-effort macOS
+notification. Run:
+
+```sh
+backlot sync
+```
+
+If the conflict recurs, resolve the files and finish with
+`backlot sync --continue`, or abandon it with `backlot sync --abort`. A
+successful manual sync clears the pause and automatic runs resume.
+
+Other failures retry at the next interval. Backlot sends one notification
+after three consecutive failures of the same kind. Because notifications may
+be denied or missed, `backlot autosync status`, `backlot status`, and
+`backlot doctor` remain the authoritative ways to check recovery state.
+
+Disable the managed LaunchAgent and remove its runtime records with:
+
+```sh
+backlot autosync disable
+```
 
 ## How It Works
 
@@ -263,9 +302,12 @@ backlot attach [--root PATH]
 backlot detach [--root PATH]
 backlot starter apply [--root PATH] [--dry-run]
 backlot status [--root PATH]
-backlot sync [--root PATH] [-m MESSAGE]
+backlot sync [--root PATH] [-m MESSAGE] [--quiet]
 backlot sync [--root PATH] --continue
 backlot sync [--root PATH] --abort
+backlot autosync enable [--root PATH] [--interval DURATION]
+backlot autosync disable [--root PATH]
+backlot autosync status [--root PATH]
 backlot protect
 backlot doctor [--root PATH]
 backlot version
@@ -280,7 +322,10 @@ backlot version
 - `starter apply` adds missing custom starter paths to marked project workspaces.
 - `status` shows the current repo's Backlot state.
 - `sync` pulls, commits, rebases, and pushes the private archive; `--continue`
-  and `--abort` recover interrupted rebase conflicts.
+  and `--abort` recover interrupted rebase conflicts, while `--quiet`
+  suppresses normal success output.
+- `autosync` manages an opt-in macOS LaunchAgent and reports durable failure
+  and conflict recovery state.
 - `protect` installs a local pre-commit guard for `.backlot`.
 - `doctor` diagnoses setup issues.
 - `version` prints build metadata.
@@ -297,7 +342,8 @@ Backlot root resolution order:
 - Backlot does not commit to your project repo.
 - Backlot does not stage files in your project repo.
 - Backlot does not push from your project repo.
-- Backlot only syncs private archive contents when you run `backlot sync`.
+- Backlot only syncs private archive contents when you run `backlot sync` or
+  explicitly enable `backlot autosync`.
 - Backlot does not encrypt files.
 
 ### Why not `.gitignore`?
@@ -326,6 +372,12 @@ This removes the managed `.backlot` symlink from the current repo and removes
 Backlot's local exclude entries from `.git/info/exclude`. It does not delete
 your private archive or any project notes.
 
+If auto-sync is enabled, disable it before removing the archive:
+
+```sh
+backlot autosync disable
+```
+
 If you intentionally want to remove the entire private archive from your
 machine, delete `~/.backlot` yourself after detaching the repos you care about.
 Deleting `~/.backlot` does not automatically clean up `.backlot` symlinks in
@@ -334,6 +386,7 @@ attached repos; those links become broken until you remove them.
 ## Limitations
 
 - macOS and Linux are supported.
+- Automatic sync is currently macOS-only.
 - Windows is not currently supported.
 - No encryption yet.
 - No daemon.

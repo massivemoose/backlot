@@ -11,11 +11,7 @@ import (
 )
 
 func RunGit(dir string, args ...string) (string, error) {
-	allArgs := []string{"-c", "core.fsmonitor=false"}
-	if dir != "" {
-		allArgs = append(allArgs, "-C", dir)
-	}
-	allArgs = append(allArgs, args...)
+	allArgs := gitArgs(dir, args...)
 	cmd := exec.Command("git", allArgs...)
 	cmd.Env = sanitizedGitEnv(os.Environ())
 	output, err := cmd.CombinedOutput()
@@ -27,6 +23,33 @@ func RunGit(dir string, args ...string) (string, error) {
 		return "", fmt.Errorf("git %s: %w: %s", strings.Join(allArgs, " "), err, text)
 	}
 	return text, nil
+}
+
+func HasStagedChanges(dir string) (bool, error) {
+	allArgs := gitArgs(dir, "diff", "--cached", "--quiet", "--exit-code")
+	cmd := exec.Command("git", allArgs...)
+	cmd.Env = sanitizedGitEnv(os.Environ())
+	output, err := cmd.CombinedOutput()
+	if err == nil {
+		return false, nil
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+		return true, nil
+	}
+	text := strings.TrimSpace(string(output))
+	if text == "" {
+		return false, fmt.Errorf("git %s: %w", strings.Join(allArgs, " "), err)
+	}
+	return false, fmt.Errorf("git %s: %w: %s", strings.Join(allArgs, " "), err, text)
+}
+
+func gitArgs(dir string, args ...string) []string {
+	allArgs := []string{"-c", "core.fsmonitor=false"}
+	if dir != "" {
+		allArgs = append(allArgs, "-C", dir)
+	}
+	return append(allArgs, args...)
 }
 
 func sanitizedGitEnv(env []string) []string {

@@ -51,20 +51,28 @@ func runStatus(args []string, stdout, stderr io.Writer) error {
 	if info.Recovery != "" {
 		fmt.Fprintf(stdout, "Recovery:      %s\n", info.Recovery)
 	}
+	if info.Autosync != "" {
+		fmt.Fprintf(stdout, "Auto-sync:     %s\n", info.Autosync)
+	}
+	if info.AutosyncRecovery != "" {
+		fmt.Fprintf(stdout, "Auto recovery: %s\n", info.AutosyncRecovery)
+	}
 	return nil
 }
 
 type projectInfo struct {
-	RootFlag        string
-	BacklotRoot     string
-	RepoRoot        string
-	Origin          string
-	ProjectKey      string
-	StateDir        string
-	LinkDescription string
-	Excluded        bool
-	StateRepo       string
-	Recovery        string
+	RootFlag         string
+	BacklotRoot      string
+	RepoRoot         string
+	Origin           string
+	ProjectKey       string
+	StateDir         string
+	LinkDescription  string
+	Excluded         bool
+	StateRepo        string
+	Recovery         string
+	Autosync         string
+	AutosyncRecovery string
 }
 
 func collectProjectInfo(rootFlag string) (projectInfo, error) {
@@ -103,6 +111,12 @@ func collectProjectInfo(rootFlag string) (projectInfo, error) {
 	info.StateRepo = stateRepoStatus(info.BacklotRoot)
 	if info.StateRepo == "sync interrupted" {
 		info.Recovery = syncRecoverySummary()
+	}
+	if health, err := collectAutosyncHealth(info.BacklotRoot); err != nil {
+		info.Autosync = "error: " + err.Error()
+	} else if health.Enabled {
+		info.Autosync = health.Summary
+		info.AutosyncRecovery = health.Recovery
 	}
 	return info, nil
 }
