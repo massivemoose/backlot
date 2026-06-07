@@ -16,6 +16,7 @@ func TestSyncQuietSuppressesNormalOutput(t *testing.T) {
 
 	state := filepath.Join(t.TempDir(), "state")
 	mustRunBacklotInit(t, state)
+	configureGitIdentity(t, state)
 	var out, errOut bytes.Buffer
 	if code := Run([]string{"sync", "--root", state, "--quiet"}, &out, &errOut); code != 0 {
 		t.Fatalf("sync --quiet exit code = %d, stderr = %s", code, errOut.String())
