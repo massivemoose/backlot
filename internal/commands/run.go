@@ -1,14 +1,14 @@
 package commands
 
 import (
+	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"os"
-)
 
-type commandFunc func([]string, io.Writer, io.Writer) error
+	"github.com/massivemoose/chomp"
+)
 
 type BuildInfo struct {
 	Version string
@@ -27,40 +27,14 @@ func Run(args []string, stdout, stderr io.Writer) int {
 }
 
 func RunWithBuildInfo(args []string, stdout, stderr io.Writer, build BuildInfo) int {
-	if len(args) == 0 {
-		printUsage(stderr)
-		return 2
-	}
-	if args[0] == "--help" || args[0] == "-h" {
-		printUsage(stdout)
-		return 0
-	}
-
-	commands := map[string]commandFunc{
-		"help":     runHelp,
-		"agents":   runAgents,
-		"init":     runInit,
-		"clone":    runClone,
-		"attach":   runAttach,
-		"autosync": runAutosync,
-		"detach":   runDetach,
-		"starter":  runStarter,
-		"status":   runStatus,
-		"sync":     runSync,
-		"protect":  runProtect,
-		"doctor":   runDoctor,
-		"version": func(args []string, stdout, stderr io.Writer) error {
-			return runVersion(args, stdout, stderr, build)
-		},
-	}
-	cmd, ok := commands[args[0]]
-	if !ok {
-		fmt.Fprintf(stderr, "unknown command %q\n", args[0])
-		printUsage(stderr)
-		return 2
-	}
-	if err := cmd(args[1:], stdout, stderr); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
+	router := backlotRouter(stdout, stderr, build)
+	if err := router.Run(context.Background(), args); err != nil {
+		if command, ok := chomp.UsageCommand(err); ok {
+			command.Usage(stdout)
+			return 0
+		}
+		if errors.Is(err, chomp.ErrUsage) || errors.Is(err, chomp.ErrHelp) {
+			router.Usage(stdout)
 			return 0
 		}
 		fmt.Fprintln(stderr, err)
@@ -69,31 +43,94 @@ func RunWithBuildInfo(args []string, stdout, stderr io.Writer, build BuildInfo) 
 	return 0
 }
 
-func runHelp(args []string, stdout, stderr io.Writer) error {
-	if len(args) > 0 {
-		return fmt.Errorf("backlot help does not accept arguments; use 'backlot <command> --help' for command help")
-	}
-	printUsage(stdout)
-	return nil
+type runnableCommand struct {
+	name    string
+	summary string
+	hidden  bool
+	run     func([]string) error
+	usage   func(io.Writer)
 }
 
-func printUsage(w io.Writer) {
-	fmt.Fprintln(w, "Usage: backlot <command> [options]")
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "Commands:")
-	fmt.Fprintln(w, "  help     show this help")
-	fmt.Fprintln(w, "  agents   setup [--root PATH] [--tool codex|claude] [--apply]")
-	fmt.Fprintln(w, "  init     [--root PATH] [--remote URL]")
-	fmt.Fprintln(w, "  clone    <archive-url> [--root PATH]")
-	fmt.Fprintln(w, "  attach   [--root PATH]")
-	fmt.Fprintln(w, "  autosync enable|disable|status [--root PATH]")
-	fmt.Fprintln(w, "  detach   [--root PATH]")
-	fmt.Fprintln(w, "  starter  apply [--root PATH] [--dry-run]")
-	fmt.Fprintln(w, "  status   [--root PATH]")
-	fmt.Fprintln(w, "  sync     [--root PATH] [-m MESSAGE|--continue|--abort] [--quiet]")
-	fmt.Fprintln(w, "  protect")
-	fmt.Fprintln(w, "  doctor   [--root PATH]")
-	fmt.Fprintln(w, "  version")
+func (command runnableCommand) Name() string { return command.name }
+
+func (command runnableCommand) Summary() string { return command.summary }
+
+func (command runnableCommand) Hidden() bool { return command.hidden }
+
+func (command runnableCommand) Run(_ context.Context, args []string) error {
+	return command.run(args)
+}
+
+func (command runnableCommand) Usage(w io.Writer) {
+	command.usage(w)
+}
+
+func backlotRouter(stdout, stderr io.Writer, build BuildInfo) *chomp.Router {
+	return chomp.NewRouter(
+		"backlot",
+		"Backlot private workspace manager.",
+		agentsRouter(stdout, stderr),
+		runnableCommand{
+			name:    "attach",
+			summary: "Attach Backlot to the current Git repository",
+			run:     func(args []string) error { return runAttach(args, stdout, stderr) },
+			usage:   printAttachUsage,
+		},
+		autosyncRouter(stdout, stderr),
+		runnableCommand{
+			name:    "clone",
+			summary: "Clone a Backlot archive",
+			run:     func(args []string) error { return runClone(args, stdout, stderr) },
+			usage:   printCloneUsage,
+		},
+		runnableCommand{
+			name:    "detach",
+			summary: "Detach Backlot from the current Git repository",
+			run:     func(args []string) error { return runDetach(args, stdout, stderr) },
+			usage:   printDetachUsage,
+		},
+		runnableCommand{
+			name:    "doctor",
+			summary: "Check Backlot setup",
+			run:     func(args []string) error { return runDoctor(args, stdout, stderr) },
+			usage:   printDoctorUsage,
+		},
+		runnableCommand{
+			name:    "init",
+			summary: "Initialize a Backlot archive",
+			run:     func(args []string) error { return runInit(args, stdout, stderr) },
+			usage:   printInitUsage,
+		},
+		runnableCommand{
+			name:    "protect",
+			summary: "Install a pre-commit private-state guard",
+			run:     func(args []string) error { return runProtect(args, stdout, stderr) },
+			usage:   printProtectUsage,
+		},
+		starterRouter(stdout, stderr),
+		runnableCommand{
+			name:    "status",
+			summary: "Show Backlot status",
+			run:     func(args []string) error { return runStatus(args, stdout, stderr) },
+			usage:   printStatusUsage,
+		},
+		runnableCommand{
+			name:    "sync",
+			summary: "Sync the Backlot archive",
+			run:     func(args []string) error { return runSync(args, stdout, stderr) },
+			usage:   printSyncUsage,
+		},
+		runnableCommand{
+			name:    "version",
+			summary: "Show Backlot version",
+			run:     func(args []string) error { return runVersion(args, stdout, stderr, build) },
+			usage:   printVersionUsage,
+		},
+	)
+}
+
+func printSpecUsage(w io.Writer, spec *chomp.Spec) {
+	fmt.Fprint(w, spec.Usage())
 }
 
 func cwd() (string, error) {
@@ -102,10 +139,4 @@ func cwd() (string, error) {
 		return "", err
 	}
 	return dir, nil
-}
-
-func newFlagSet(name string, stderr io.Writer) *flag.FlagSet {
-	fs := flag.NewFlagSet(name, flag.ContinueOnError)
-	fs.SetOutput(stderr)
-	return fs
 }

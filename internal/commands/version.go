@@ -1,22 +1,28 @@
 package commands
 
 import (
-	"flag"
 	"fmt"
 	"io"
+
+	"github.com/massivemoose/chomp"
 )
 
 func runVersion(args []string, stdout, stderr io.Writer, build BuildInfo) error {
-	fs := newFlagSet("version", stderr)
-	if err := fs.Parse(args); err != nil {
+	if _, err := versionSpec().Parse(args); err != nil {
 		return err
-	}
-	if fs.NArg() != 0 {
-		return flag.ErrHelp
 	}
 
 	fmt.Fprintf(stdout, "backlot %s\n", build.Version)
 	fmt.Fprintf(stdout, "commit: %s\n", build.Commit)
 	fmt.Fprintf(stdout, "date: %s\n", build.Date)
 	return nil
+}
+
+func versionSpec() *chomp.Spec {
+	return chomp.New("backlot", "version").
+		Positionals(0, 0)
+}
+
+func printVersionUsage(w io.Writer) {
+	printSpecUsage(w, versionSpec())
 }

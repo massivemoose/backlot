@@ -2,7 +2,6 @@ package commands
 
 import (
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -10,37 +9,29 @@ import (
 	"sort"
 
 	"github.com/massivemoose/backlot/internal/paths"
+	"github.com/massivemoose/chomp"
 )
 
-func runStarter(args []string, stdout, stderr io.Writer) error {
-	if len(args) == 0 {
-		printStarterUsage(stderr)
-		return flag.ErrHelp
-	}
-	switch args[0] {
-	case "apply":
-		return runStarterApply(args[1:], stdout, stderr)
-	default:
-		return fmt.Errorf("unknown starter command %q", args[0])
-	}
+func starterRouter(stdout, stderr io.Writer) *chomp.Router {
+	return chomp.NewRouter(
+		"starter",
+		"Manage starter templates.",
+		runnableCommand{
+			name:    "apply",
+			summary: "Apply starter template files to workspaces",
+			run:     func(args []string) error { return runStarterApply(args, stdout, stderr) },
+			usage:   printStarterApplyUsage,
+		},
+	)
 }
 
 func runStarterApply(args []string, stdout, stderr io.Writer) error {
-	fs := newFlagSet("starter apply", stderr)
-	fs.Usage = func() {
-		fmt.Fprintln(stderr, "Usage:")
-		fmt.Fprintln(stderr, "  backlot starter apply [--root PATH] [--dry-run]")
-	}
-	rootFlag := fs.String("root", "", "Backlot root path")
-	dryRun := fs.Bool("dry-run", false, "show changes without writing files")
-	if err := fs.Parse(args); err != nil {
+	result, err := starterApplySpec().Parse(args)
+	if err != nil {
 		return err
 	}
-	if fs.NArg() != 0 {
-		return flag.ErrHelp
-	}
 
-	root, err := paths.BacklotRoot(*rootFlag)
+	root, err := paths.BacklotRoot(result.String("root"))
 	if err != nil {
 		return err
 	}
@@ -70,7 +61,7 @@ func runStarterApply(args []string, stdout, stderr io.Writer) error {
 	fmt.Fprintln(stdout, "Backlot starter apply")
 	fmt.Fprintf(stdout, "Backlot root: %s\n", root)
 	fmt.Fprintf(stdout, "Starter: %s\n", starterDir)
-	if *dryRun {
+	if result.Bool("dry-run") {
 		fmt.Fprintln(stdout, "Dry run: yes")
 	} else {
 		fmt.Fprintln(stdout, "Dry run: no")
@@ -80,7 +71,7 @@ func runStarterApply(args []string, stdout, stderr io.Writer) error {
 		fmt.Fprintln(stdout)
 	}
 	for _, workspace := range workspaces {
-		stats, err := applyStarterToWorkspace(starterDir, workspace, *dryRun)
+		stats, err := applyStarterToWorkspace(starterDir, workspace, result.Bool("dry-run"))
 		if err != nil {
 			return err
 		}
@@ -90,17 +81,21 @@ func runStarterApply(args []string, stdout, stderr io.Writer) error {
 		}
 		fmt.Fprintf(stdout, "  %s: added=%d skipped=%d conflicts=%d\n", filepath.ToSlash(rel), stats.Added, stats.Skipped, stats.Conflicts)
 	}
-	if *dryRun {
+	if result.Bool("dry-run") {
 		fmt.Fprintln(stdout, "\nDry run - no changes applied")
 	}
 	return nil
 }
 
-func printStarterUsage(w io.Writer) {
-	fmt.Fprintln(w, "Usage: backlot starter <command> [options]")
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "Commands:")
-	fmt.Fprintln(w, "  apply    [--root PATH] [--dry-run]")
+func starterApplySpec() *chomp.Spec {
+	return chomp.New("backlot", "starter", "apply").
+		String("root", chomp.ValueName("path"), chomp.Description("Backlot root path")).
+		Bool("dry-run", chomp.Description("show changes without writing files")).
+		Positionals(0, 0)
+}
+
+func printStarterApplyUsage(w io.Writer) {
+	printSpecUsage(w, starterApplySpec())
 }
 
 func discoverProjectWorkspaces(root string) ([]string, error) {

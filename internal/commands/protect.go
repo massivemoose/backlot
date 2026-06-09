@@ -1,13 +1,13 @@
 package commands
 
 import (
-	"flag"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 
 	"github.com/massivemoose/backlot/internal/gitutil"
+	"github.com/massivemoose/chomp"
 )
 
 const preCommitHook = `#!/bin/sh
@@ -18,19 +18,8 @@ fi
 `
 
 func runProtect(args []string, stdout, stderr io.Writer) error {
-	fs := newFlagSet("protect", stderr)
-	fs.Usage = func() {
-		fmt.Fprintln(stderr, "Usage:")
-		fmt.Fprintln(stderr, "  backlot protect")
-		fmt.Fprintln(stderr)
-		fmt.Fprintln(stderr, "Example:")
-		fmt.Fprintln(stderr, "  backlot protect")
-	}
-	if err := fs.Parse(args); err != nil {
+	if _, err := protectSpec().Parse(args); err != nil {
 		return err
-	}
-	if fs.NArg() != 0 {
-		return flag.ErrHelp
 	}
 
 	current, err := cwd()
@@ -62,4 +51,13 @@ func runProtect(args []string, stdout, stderr io.Writer) error {
 	}
 	fmt.Fprintf(stdout, "Installed Backlot pre-commit hook at %s\n", hookPath)
 	return nil
+}
+
+func protectSpec() *chomp.Spec {
+	return chomp.New("backlot", "protect").
+		Positionals(0, 0)
+}
+
+func printProtectUsage(w io.Writer) {
+	printSpecUsage(w, protectSpec())
 }

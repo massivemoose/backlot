@@ -2,7 +2,6 @@ package commands
 
 import (
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -10,6 +9,7 @@ import (
 
 	"github.com/massivemoose/backlot/internal/gitutil"
 	"github.com/massivemoose/backlot/internal/paths"
+	"github.com/massivemoose/chomp"
 )
 
 const rootReadme = `# Backlot state
@@ -18,25 +18,12 @@ Private Backlot workspace state.
 `
 
 func runInit(args []string, stdout, stderr io.Writer) error {
-	fs := newFlagSet("init", stderr)
-	fs.Usage = func() {
-		fmt.Fprintln(stderr, "Usage:")
-		fmt.Fprintln(stderr, "  backlot init [--root PATH] [--remote URL]")
-		fmt.Fprintln(stderr)
-		fmt.Fprintln(stderr, "Examples:")
-		fmt.Fprintln(stderr, "  backlot init")
-		fmt.Fprintln(stderr, "  backlot init --remote git@github.com:you/backlot-archive.git")
-	}
-	rootFlag := fs.String("root", "", "Backlot root path")
-	remoteFlag := fs.String("remote", "", "origin remote URL")
-	if err := fs.Parse(args); err != nil {
+	result, err := initSpec().Parse(args)
+	if err != nil {
 		return err
 	}
-	if fs.NArg() != 0 {
-		return flag.ErrHelp
-	}
 
-	root, err := paths.BacklotRoot(*rootFlag)
+	root, err := paths.BacklotRoot(result.String("root"))
 	if err != nil {
 		return err
 	}
@@ -70,14 +57,25 @@ func runInit(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 
-	if *remoteFlag != "" {
+	if remoteFlag := result.String("remote"); remoteFlag != "" {
 		if origin, err := gitutil.OriginURL(root); err == nil {
 			fmt.Fprintf(stdout, "origin already exists (%s); leaving it unchanged.\n", origin)
-		} else if _, err := gitutil.RunGit(root, "remote", "add", "origin", *remoteFlag); err != nil {
+		} else if _, err := gitutil.RunGit(root, "remote", "add", "origin", remoteFlag); err != nil {
 			return err
 		} else {
-			fmt.Fprintf(stdout, "Added origin %s\n", *remoteFlag)
+			fmt.Fprintf(stdout, "Added origin %s\n", remoteFlag)
 		}
 	}
 	return nil
+}
+
+func initSpec() *chomp.Spec {
+	return chomp.New("backlot", "init").
+		String("root", chomp.ValueName("path"), chomp.Description("Backlot root path")).
+		String("remote", chomp.ValueName("url"), chomp.Description("origin remote URL")).
+		Positionals(0, 0)
+}
+
+func printInitUsage(w io.Writer) {
+	printSpecUsage(w, initSpec())
 }

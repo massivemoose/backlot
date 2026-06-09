@@ -35,11 +35,14 @@ func TestHelpCommandPrintsUsage(t *testing.T) {
 	}
 	text := out.String()
 	for _, want := range []string{
-		"Usage: backlot <command> [options]",
-		"help     show this help",
-		"init",
+		"Backlot private workspace manager.",
+		"Usage:\n  backlot <command>",
+		"agents",
+		"Manage agent tool setup.",
 		"sync",
+		"Sync the Backlot archive",
 		"doctor",
+		"Check Backlot setup",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("help output missing %q:\n%s", want, text)
@@ -50,22 +53,70 @@ func TestHelpCommandPrintsUsage(t *testing.T) {
 	}
 }
 
-func TestHelpCommandRejectsExtraArgsClearly(t *testing.T) {
+func TestHelpCommandRejectsUnknownCommandClearly(t *testing.T) {
 	var out, errOut bytes.Buffer
-	if code := Run([]string{"help", "sync"}, &out, &errOut); code == 0 {
-		t.Fatalf("help with extra args exited 0, stdout = %s", out.String())
+	if code := Run([]string{"help", "nope"}, &out, &errOut); code == 0 {
+		t.Fatalf("help with unknown command exited 0, stdout = %s", out.String())
 	}
 	if out.Len() > 0 {
-		t.Fatalf("help with extra args printed stdout:\n%s", out.String())
+		t.Fatalf("help with unknown command printed stdout:\n%s", out.String())
 	}
-	text := errOut.String()
+	if !strings.Contains(errOut.String(), `unknown command "nope"`) {
+		t.Fatalf("help with unknown command stderr = %q, want unknown command", errOut.String())
+	}
+}
+
+func TestHelpCommandShowsCommandUsage(t *testing.T) {
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"help", "sync"}, &out, &errOut); code != 0 {
+		t.Fatalf("help sync exit code = %d, stderr = %s", code, errOut.String())
+	}
+	text := out.String()
 	for _, want := range []string{
-		"backlot help does not accept arguments",
-		"backlot <command> --help",
+		"Usage: backlot sync [flags]",
+		"--root <path>",
+		"-m, --message <message>",
+		"--continue",
+		"--abort",
+		"--quiet",
 	} {
 		if !strings.Contains(text, want) {
-			t.Fatalf("help with extra args stderr missing %q:\n%s", want, text)
+			t.Fatalf("help sync output missing %q:\n%s", want, text)
 		}
+	}
+	if errOut.Len() > 0 {
+		t.Fatalf("help sync printed stderr:\n%s", errOut.String())
+	}
+}
+
+func TestAutosyncUsageIsChompGeneratedAndHidesRunCommand(t *testing.T) {
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"autosync", "--help"}, &out, &errOut); code != 0 {
+		t.Fatalf("autosync help exit code = %d, stderr = %s", code, errOut.String())
+	}
+	text := out.String()
+	for _, want := range []string{
+		"Usage:\n  autosync <command>",
+		"enable",
+		"disable",
+		"status",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("autosync help output missing %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "run") {
+		t.Fatalf("autosync help advertised hidden run command:\n%s", text)
+	}
+}
+
+func TestParserErrorsUseChompCommandNames(t *testing.T) {
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"status", "--wat"}, &out, &errOut); code == 0 {
+		t.Fatalf("status accepted unknown flag, stdout = %s", out.String())
+	}
+	if !strings.Contains(errOut.String(), `unknown backlot status flag "--wat"`) {
+		t.Fatalf("status unknown flag stderr = %q, want chomp unknown flag", errOut.String())
 	}
 }
 
@@ -86,10 +137,13 @@ func TestSyncHelpIncludesRecoveryFlags(t *testing.T) {
 	}
 	text := out.String() + errOut.String()
 	for _, want := range []string{
-		"backlot sync [--root PATH] --continue",
-		"backlot sync [--root PATH] --abort",
-		"Continue after resolving a conflict:",
-		"backlot sync --continue",
+		"Usage: backlot sync [flags]",
+		"--continue",
+		"continue an interrupted Backlot sync",
+		"--abort",
+		"abort an interrupted Backlot sync",
+		"--quiet",
+		"suppress normal sync output",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("sync help missing %q:\n%s", want, text)
@@ -352,17 +406,17 @@ func TestCloneHybridArgs(t *testing.T) {
 		{
 			name:    "missing url",
 			args:    []string{"clone"},
-			wantErr: "error: missing archive URL",
+			wantErr: "backlot clone requires <archive-url>",
 		},
 		{
 			name:    "too many args",
 			args:    []string{"clone", "one", "two"},
-			wantErr: "error: too many arguments",
+			wantErr: "backlot clone accepts one <archive-url>",
 		},
 		{
 			name:    "remote flag is unsupported",
 			args:    []string{"clone", "--remote", "flag"},
-			wantErr: "flag provided but not defined: -remote",
+			wantErr: `unknown backlot clone flag "--remote"`,
 		},
 		{
 			name: "positional then root success",
@@ -391,6 +445,16 @@ func TestCloneHybridArgs(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestCloneParserUsesChompPositionalErrors(t *testing.T) {
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"clone", "one", "two"}, &out, &errOut); code == 0 {
+		t.Fatalf("clone accepted too many positionals, stdout = %s", out.String())
+	}
+	if !strings.Contains(errOut.String(), "backlot clone accepts one <archive-url>") {
+		t.Fatalf("clone too-many stderr = %q, want chomp positional error", errOut.String())
 	}
 }
 

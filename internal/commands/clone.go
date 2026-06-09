@@ -6,19 +6,19 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/massivemoose/backlot/internal/gitutil"
 	"github.com/massivemoose/backlot/internal/paths"
+	"github.com/massivemoose/chomp"
 )
 
 func runClone(args []string, stdout, stderr io.Writer) error {
-	remote, rootFlag, err := parseCloneArgs(args, stderr)
+	result, err := cloneSpec().Parse(args)
 	if err != nil {
 		return err
 	}
 
-	root, err := paths.BacklotRoot(rootFlag)
+	root, err := paths.BacklotRoot(result.String("root"))
 	if err != nil {
 		return err
 	}
@@ -28,7 +28,7 @@ func runClone(args []string, stdout, stderr io.Writer) error {
 	if err := os.MkdirAll(filepath.Dir(root), 0o755); err != nil {
 		return err
 	}
-	if err := runGitClone(remote, root); err != nil {
+	if err := runGitClone(result.Positional(0), root); err != nil {
 		return err
 	}
 	if !gitutil.IsGitRepoRoot(root) {
@@ -48,52 +48,14 @@ func runClone(args []string, stdout, stderr io.Writer) error {
 	return nil
 }
 
-func parseCloneArgs(args []string, stderr io.Writer) (string, string, error) {
-	var archiveURL string
-	var rootFlag string
+func cloneSpec() *chomp.Spec {
+	return chomp.New("backlot", "clone").
+		String("root", chomp.ValueName("path"), chomp.Description("Backlot root path")).
+		Positionals(1, 1, "archive-url")
+}
 
-	fs := newFlagSet("clone", stderr)
-	fs.Usage = func() {
-		fmt.Fprintln(stderr, "Usage:")
-		fmt.Fprintln(stderr, "  backlot clone <archive-url>")
-		fmt.Fprintln(stderr)
-		fmt.Fprintln(stderr, "Example:")
-		fmt.Fprintln(stderr, "  backlot clone git@github.com:you/backlot-archive.git")
-	}
-	fs.StringVar(&rootFlag, "root", "", "Backlot root path")
-
-	// Pre-process args to allow positional <archive-url> before or after flags.
-	// Go's flag package stops at the first non-flag argument.
-	// We want to extract one non-flag argument as the archiveURL.
-	var remainingArgs []string
-	for i := 0; i < len(args); i++ {
-		arg := args[i]
-		if !strings.HasPrefix(arg, "-") && archiveURL == "" {
-			archiveURL = arg
-		} else {
-			remainingArgs = append(remainingArgs, arg)
-			if (arg == "--root" || arg == "-root") && i+1 < len(args) {
-				remainingArgs = append(remainingArgs, args[i+1])
-				i++
-			}
-		}
-	}
-
-	if err := fs.Parse(remainingArgs); err != nil {
-		return "", "", err
-	}
-
-	if fs.NArg() > 0 {
-		fs.Usage()
-		return "", "", fmt.Errorf("error: too many arguments")
-	}
-
-	if archiveURL == "" {
-		fs.Usage()
-		return "", "", fmt.Errorf("error: missing archive URL")
-	}
-
-	return archiveURL, rootFlag, nil
+func printCloneUsage(w io.Writer) {
+	printSpecUsage(w, cloneSpec())
 }
 
 func ensureCloneTarget(root string) error {
