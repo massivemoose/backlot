@@ -1,33 +1,22 @@
 package commands
 
 import (
-	"flag"
 	"fmt"
 	"io"
 	"path/filepath"
 
 	"github.com/massivemoose/backlot/internal/gitutil"
 	"github.com/massivemoose/backlot/internal/paths"
+	"github.com/massivemoose/chomp"
 )
 
 func runDetach(args []string, stdout, stderr io.Writer) error {
-	fs := newFlagSet("detach", stderr)
-	fs.Usage = func() {
-		fmt.Fprintln(stderr, "Usage:")
-		fmt.Fprintln(stderr, "  backlot detach [--root PATH]")
-		fmt.Fprintln(stderr)
-		fmt.Fprintln(stderr, "Example:")
-		fmt.Fprintln(stderr, "  backlot detach")
-	}
-	rootFlag := fs.String("root", "", "Backlot root path")
-	if err := fs.Parse(args); err != nil {
+	result, err := detachSpec().Parse(args)
+	if err != nil {
 		return err
 	}
-	if fs.NArg() != 0 {
-		return flag.ErrHelp
-	}
 
-	root, err := paths.BacklotRoot(*rootFlag)
+	root, err := paths.BacklotRoot(result.String("root"))
 	if err != nil {
 		return err
 	}
@@ -57,4 +46,14 @@ func runDetach(args []string, stdout, stderr io.Writer) error {
 	fmt.Fprintln(stdout, "Exclude:     removed .backlot entries")
 	fmt.Fprintf(stdout, "Archive:     left unchanged at %s\n", root)
 	return nil
+}
+
+func detachSpec() *chomp.Spec {
+	return chomp.New("backlot", "detach").
+		String("root", chomp.ValueName("path"), chomp.Description("Backlot root path")).
+		Positionals(0, 0)
+}
+
+func printDetachUsage(w io.Writer) {
+	printSpecUsage(w, detachSpec())
 }

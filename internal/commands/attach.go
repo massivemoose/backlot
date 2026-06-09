@@ -2,7 +2,6 @@ package commands
 
 import (
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -10,6 +9,7 @@ import (
 
 	"github.com/massivemoose/backlot/internal/gitutil"
 	"github.com/massivemoose/backlot/internal/paths"
+	"github.com/massivemoose/chomp"
 )
 
 const starterNotes = `# Backlot notes
@@ -18,27 +18,16 @@ Private project notes for this repository.
 `
 
 func runAttach(args []string, stdout, stderr io.Writer) error {
-	fs := newFlagSet("attach", stderr)
-	fs.Usage = func() {
-		fmt.Fprintln(stderr, "Usage:")
-		fmt.Fprintln(stderr, "  backlot attach [--root PATH]")
-		fmt.Fprintln(stderr)
-		fmt.Fprintln(stderr, "Example:")
-		fmt.Fprintln(stderr, "  backlot attach")
-	}
-	rootFlag := fs.String("root", "", "Backlot root path")
-	linkName := fs.String("link-name", ".backlot", "link name")
-	if err := fs.Parse(args); err != nil {
+	result, err := attachSpec().Parse(args)
+	if err != nil {
 		return err
 	}
-	if fs.NArg() != 0 {
-		return flag.ErrHelp
-	}
-	if err := paths.ValidateLinkName(*linkName); err != nil {
+	linkName := result.String("link-name")
+	if err := paths.ValidateLinkName(linkName); err != nil {
 		return err
 	}
 
-	root, err := paths.BacklotRoot(*rootFlag)
+	root, err := paths.BacklotRoot(result.String("root"))
 	if err != nil {
 		return err
 	}
@@ -74,19 +63,30 @@ func runAttach(args []string, stdout, stderr io.Writer) error {
 	if err := ensureProjectMarker(stateDir); err != nil {
 		return err
 	}
-	if err := paths.EnsureManagedSymlink(filepath.Join(repoRoot, *linkName), stateDir); err != nil {
+	if err := paths.EnsureManagedSymlink(filepath.Join(repoRoot, linkName), stateDir); err != nil {
 		return err
 	}
-	if err := paths.EnsureExclude(repoRoot, *linkName); err != nil {
+	if err := paths.EnsureExclude(repoRoot, linkName); err != nil {
 		return err
 	}
 
 	fmt.Fprintf(stdout, "Attached Backlot\n")
 	fmt.Fprintf(stdout, "Project key: %s\n", key)
 	fmt.Fprintf(stdout, "State dir:   %s\n", stateDir)
-	fmt.Fprintf(stdout, "Link:        %s -> %s\n", *linkName, stateDir)
+	fmt.Fprintf(stdout, "Link:        %s -> %s\n", linkName, stateDir)
 	fmt.Fprintf(stdout, "Starter:     %s\n", starter)
 	return nil
+}
+
+func attachSpec() *chomp.Spec {
+	return chomp.New("backlot", "attach").
+		String("root", chomp.ValueName("path"), chomp.Description("Backlot root path")).
+		String("link-name", chomp.ValueName("name"), chomp.Default(".backlot"), chomp.Description("link name")).
+		Positionals(0, 0)
+}
+
+func printAttachUsage(w io.Writer) {
+	printSpecUsage(w, attachSpec())
 }
 
 // ensureStarterState adds starter content only when Backlot creates this

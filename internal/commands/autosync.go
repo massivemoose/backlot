@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -18,6 +17,7 @@ import (
 	"github.com/massivemoose/backlot/internal/autosync"
 	"github.com/massivemoose/backlot/internal/gitutil"
 	"github.com/massivemoose/backlot/internal/paths"
+	"github.com/massivemoose/chomp"
 )
 
 const defaultAutosyncInterval = 15 * time.Minute
@@ -31,57 +31,54 @@ var (
 	autosyncLaunchctl  = runLaunchctl
 )
 
-func runAutosync(args []string, stdout, stderr io.Writer) error {
-	if len(args) == 0 {
-		printAutosyncUsage(stderr)
-		return flag.ErrHelp
-	}
-	switch args[0] {
-	case "enable":
-		return runAutosyncEnable(args[1:], stdout, stderr)
-	case "disable":
-		return runAutosyncDisable(args[1:], stdout, stderr)
-	case "status":
-		return runAutosyncStatus(args[1:], stdout, stderr)
-	case "run":
-		return runAutosyncManagedRun(args[1:], stderr)
-	case "--help", "-h":
-		printAutosyncUsage(stdout)
-		return nil
-	default:
-		return fmt.Errorf("unknown autosync command %q", args[0])
-	}
-}
-
-func printAutosyncUsage(w io.Writer) {
-	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  backlot autosync enable [--root PATH] [--interval DURATION]")
-	fmt.Fprintln(w, "  backlot autosync disable [--root PATH]")
-	fmt.Fprintln(w, "  backlot autosync status [--root PATH]")
+func autosyncRouter(stdout, stderr io.Writer) *chomp.Router {
+	return chomp.NewRouter(
+		"autosync",
+		"Manage automatic Backlot sync.",
+		runnableCommand{
+			name:    "enable",
+			summary: "Enable automatic sync",
+			run:     func(args []string) error { return runAutosyncEnable(args, stdout, stderr) },
+			usage:   printAutosyncEnableUsage,
+		},
+		runnableCommand{
+			name:    "disable",
+			summary: "Disable automatic sync",
+			run:     func(args []string) error { return runAutosyncDisable(args, stdout, stderr) },
+			usage:   printAutosyncDisableUsage,
+		},
+		runnableCommand{
+			name:    "run",
+			summary: "Run managed automatic sync",
+			hidden:  true,
+			run:     func(args []string) error { return runAutosyncManagedRun(args, stderr) },
+			usage:   printAutosyncRunUsage,
+		},
+		runnableCommand{
+			name:    "status",
+			summary: "Show automatic sync status",
+			run:     func(args []string) error { return runAutosyncStatus(args, stdout, stderr) },
+			usage:   printAutosyncStatusUsage,
+		},
+	)
 }
 
 func runAutosyncEnable(args []string, stdout, stderr io.Writer) error {
+	result, err := autosyncEnableSpec().Parse(args)
+	if err != nil {
+		return err
+	}
 	if err := requireAutosyncPlatform(); err != nil {
 		return err
 	}
-	fs := newFlagSet("autosync enable", stderr)
-	fs.Usage = func() { printAutosyncUsage(stderr) }
-	rootFlag := fs.String("root", "", "Backlot root path")
-	intervalFlag := fs.String("interval", defaultAutosyncInterval.String(), "automatic sync interval")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	if fs.NArg() != 0 {
-		return flag.ErrHelp
-	}
-	interval, err := time.ParseDuration(*intervalFlag)
+	interval, err := time.ParseDuration(result.String("interval"))
 	if err != nil {
 		return fmt.Errorf("parse autosync interval: %w", err)
 	}
 	if interval < time.Minute {
 		return fmt.Errorf("autosync interval must be at least 1m")
 	}
-	root, err := resolveAutosyncRoot(*rootFlag)
+	root, err := resolveAutosyncRoot(result.String("root"))
 	if err != nil {
 		return err
 	}
@@ -155,11 +152,11 @@ func runAutosyncEnable(args []string, stdout, stderr io.Writer) error {
 }
 
 func runAutosyncDisable(args []string, stdout, stderr io.Writer) error {
-	if err := requireAutosyncPlatform(); err != nil {
+	rootFlag, err := parseAutosyncRootOnly("disable", args)
+	if err != nil {
 		return err
 	}
-	rootFlag, err := parseAutosyncRootOnly("autosync disable", args, stderr)
-	if err != nil {
+	if err := requireAutosyncPlatform(); err != nil {
 		return err
 	}
 	root, err := resolveAutosyncManagedRoot(rootFlag)
@@ -206,11 +203,11 @@ func runAutosyncDisable(args []string, stdout, stderr io.Writer) error {
 }
 
 func runAutosyncStatus(args []string, stdout, stderr io.Writer) error {
-	if err := requireAutosyncPlatform(); err != nil {
+	rootFlag, err := parseAutosyncRootOnly("status", args)
+	if err != nil {
 		return err
 	}
-	rootFlag, err := parseAutosyncRootOnly("autosync status", args, stderr)
-	if err != nil {
+	if err := requireAutosyncPlatform(); err != nil {
 		return err
 	}
 	root, err := resolveAutosyncManagedRoot(rootFlag)
@@ -276,7 +273,7 @@ func runAutosyncStatus(args []string, stdout, stderr io.Writer) error {
 }
 
 func runAutosyncManagedRun(args []string, stderr io.Writer) error {
-	rootFlag, err := parseAutosyncRootOnly("autosync run", args, stderr)
+	rootFlag, err := parseAutosyncRootOnly("run", args)
 	if err != nil {
 		return err
 	}
@@ -287,16 +284,41 @@ func runAutosyncManagedRun(args []string, stderr io.Writer) error {
 	return runManagedAutosync(root)
 }
 
-func parseAutosyncRootOnly(name string, args []string, stderr io.Writer) (string, error) {
-	fs := newFlagSet(name, stderr)
-	rootFlag := fs.String("root", "", "Backlot root path")
-	if err := fs.Parse(args); err != nil {
+func parseAutosyncRootOnly(command string, args []string) (string, error) {
+	result, err := autosyncRootOnlySpec(command).Parse(args)
+	if err != nil {
 		return "", err
 	}
-	if fs.NArg() != 0 {
-		return "", flag.ErrHelp
-	}
-	return *rootFlag, nil
+	return result.String("root"), nil
+}
+
+func autosyncEnableSpec() *chomp.Spec {
+	return chomp.New("backlot", "autosync", "enable").
+		String("root", chomp.ValueName("path"), chomp.Description("Backlot root path")).
+		String("interval", chomp.ValueName("duration"), chomp.Default(defaultAutosyncInterval.String()), chomp.Description("automatic sync interval")).
+		Positionals(0, 0)
+}
+
+func autosyncRootOnlySpec(command string) *chomp.Spec {
+	return chomp.New("backlot", "autosync", command).
+		String("root", chomp.ValueName("path"), chomp.Description("Backlot root path")).
+		Positionals(0, 0)
+}
+
+func printAutosyncEnableUsage(w io.Writer) {
+	printSpecUsage(w, autosyncEnableSpec())
+}
+
+func printAutosyncDisableUsage(w io.Writer) {
+	printSpecUsage(w, autosyncRootOnlySpec("disable"))
+}
+
+func printAutosyncStatusUsage(w io.Writer) {
+	printSpecUsage(w, autosyncRootOnlySpec("status"))
+}
+
+func printAutosyncRunUsage(w io.Writer) {
+	printSpecUsage(w, autosyncRootOnlySpec("run"))
 }
 
 func resolveAutosyncRoot(rootFlag string) (string, error) {

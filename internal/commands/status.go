@@ -1,7 +1,6 @@
 package commands
 
 import (
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -10,26 +9,16 @@ import (
 
 	"github.com/massivemoose/backlot/internal/gitutil"
 	"github.com/massivemoose/backlot/internal/paths"
+	"github.com/massivemoose/chomp"
 )
 
 func runStatus(args []string, stdout, stderr io.Writer) error {
-	fs := newFlagSet("status", stderr)
-	fs.Usage = func() {
-		fmt.Fprintln(stderr, "Usage:")
-		fmt.Fprintln(stderr, "  backlot status [--root PATH]")
-		fmt.Fprintln(stderr)
-		fmt.Fprintln(stderr, "Example:")
-		fmt.Fprintln(stderr, "  backlot status")
-	}
-	rootFlag := fs.String("root", "", "Backlot root path")
-	if err := fs.Parse(args); err != nil {
+	result, err := statusSpec().Parse(args)
+	if err != nil {
 		return err
 	}
-	if fs.NArg() != 0 {
-		return flag.ErrHelp
-	}
 
-	info, err := collectProjectInfo(*rootFlag)
+	info, err := collectProjectInfo(result.String("root"))
 	if err != nil {
 		return err
 	}
@@ -58,6 +47,16 @@ func runStatus(args []string, stdout, stderr io.Writer) error {
 		fmt.Fprintf(stdout, "Auto recovery: %s\n", info.AutosyncRecovery)
 	}
 	return nil
+}
+
+func statusSpec() *chomp.Spec {
+	return chomp.New("backlot", "status").
+		String("root", chomp.ValueName("path"), chomp.Description("Backlot root path")).
+		Positionals(0, 0)
+}
+
+func printStatusUsage(w io.Writer) {
+	printSpecUsage(w, statusSpec())
 }
 
 type projectInfo struct {

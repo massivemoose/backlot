@@ -1,7 +1,6 @@
 package commands
 
 import (
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -10,25 +9,15 @@ import (
 
 	"github.com/massivemoose/backlot/internal/gitutil"
 	"github.com/massivemoose/backlot/internal/paths"
+	"github.com/massivemoose/chomp"
 )
 
 const agentSetupDocsURL = "https://github.com/massivemoose/backlot/blob/main/docs/agents.md"
 
 func runDoctor(args []string, stdout, stderr io.Writer) error {
-	fs := newFlagSet("doctor", stderr)
-	fs.Usage = func() {
-		fmt.Fprintln(stderr, "Usage:")
-		fmt.Fprintln(stderr, "  backlot doctor [--root PATH]")
-		fmt.Fprintln(stderr)
-		fmt.Fprintln(stderr, "Example:")
-		fmt.Fprintln(stderr, "  backlot doctor")
-	}
-	rootFlag := fs.String("root", "", "Backlot root path")
-	if err := fs.Parse(args); err != nil {
+	result, err := doctorSpec().Parse(args)
+	if err != nil {
 		return err
-	}
-	if fs.NArg() != 0 {
-		return flag.ErrHelp
 	}
 
 	fmt.Fprintln(stdout, "Backlot doctor")
@@ -46,7 +35,7 @@ func runDoctor(args []string, stdout, stderr io.Writer) error {
 		failCheck("git found")
 	}
 
-	root, rootErr := paths.BacklotRoot(*rootFlag)
+	root, rootErr := paths.BacklotRoot(result.String("root"))
 	current, cwdErr := cwd()
 	repoRoot := ""
 	origin := ""
@@ -149,6 +138,16 @@ func runDoctor(args []string, stdout, stderr io.Writer) error {
 		return fmt.Errorf("doctor found %d problem(s)", failures)
 	}
 	return nil
+}
+
+func doctorSpec() *chomp.Spec {
+	return chomp.New("backlot", "doctor").
+		String("root", chomp.ValueName("path"), chomp.Description("Backlot root path")).
+		Positionals(0, 0)
+}
+
+func printDoctorUsage(w io.Writer) {
+	printSpecUsage(w, doctorSpec())
 }
 
 func pass(w io.Writer, text string) {

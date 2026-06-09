@@ -1,7 +1,6 @@
 package commands
 
 import (
-	"flag"
 	"fmt"
 	"io"
 	"time"
@@ -9,41 +8,35 @@ import (
 	"github.com/massivemoose/backlot/internal/agents"
 	"github.com/massivemoose/backlot/internal/gitutil"
 	"github.com/massivemoose/backlot/internal/paths"
+	"github.com/massivemoose/chomp"
 )
 
-func runAgents(args []string, stdout, stderr io.Writer) error {
-	if len(args) == 0 {
-		printAgentsUsage(stderr)
-		return flag.ErrHelp
-	}
-	switch args[0] {
-	case "setup":
-		return runAgentsSetup(args[1:], stdout, stderr)
-	default:
-		return fmt.Errorf("unknown agents command %q", args[0])
-	}
+func agentsRouter(stdout, stderr io.Writer) *chomp.Router {
+	return chomp.NewRouter(
+		"agents",
+		"Manage agent tool setup.",
+		runnableCommand{
+			name:    "setup",
+			summary: "Show or apply agent configuration",
+			run:     func(args []string) error { return runAgentsSetup(args, stdout, stderr) },
+			usage:   printAgentsSetupUsage,
+		},
+	)
 }
 
 func runAgentsSetup(args []string, stdout, stderr io.Writer) error {
-	fs := newFlagSet("agents setup", stderr)
-	fs.Usage = func() {
-		fmt.Fprintln(stderr, "Usage:")
-		fmt.Fprintln(stderr, "  backlot agents setup [--root PATH] [--tool codex|claude] [--apply]")
-	}
-	rootFlag := fs.String("root", "", "Backlot root path")
-	toolFlag := fs.String("tool", "", "agent tool")
-	applyFlag := fs.Bool("apply", false, "apply persistent config changes")
-	if err := fs.Parse(args); err != nil {
+	result, err := agentsSetupSpec().Parse(args)
+	if err != nil {
 		return err
 	}
-	if fs.NArg() != 0 {
-		return flag.ErrHelp
-	}
-	if *applyFlag && *toolFlag == "" {
+	rootFlag := result.String("root")
+	toolFlag := result.String("tool")
+	applyFlag := result.Bool("apply")
+	if applyFlag && toolFlag == "" {
 		return fmt.Errorf("--apply requires --tool")
 	}
 
-	root, err := paths.BacklotRoot(*rootFlag)
+	root, err := paths.BacklotRoot(rootFlag)
 	if err != nil {
 		return err
 	}
@@ -56,7 +49,7 @@ func runAgentsSetup(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 
-	selected, err := selectedAgents(*toolFlag)
+	selected, err := selectedAgents(toolFlag)
 	if err != nil {
 		return err
 	}
@@ -65,7 +58,7 @@ func runAgentsSetup(args []string, stdout, stderr io.Writer) error {
 	fmt.Fprintln(stdout)
 	fmt.Fprintf(stdout, "Backlot root: %s\n", root)
 	fmt.Fprintln(stdout)
-	if *applyFlag {
+	if applyFlag {
 		result, err := selected[0].ApplyConfig(env, root, time.Now())
 		if err != nil {
 			return err
@@ -99,7 +92,7 @@ func runAgentsSetup(args []string, stdout, stderr io.Writer) error {
 			fmt.Fprintln(stdout, "Status: config not found")
 		}
 		fmt.Fprintf(stdout, "One-session: %s\n", agent.OneSessionCommand(repoRoot, root))
-		if *toolFlag == "" {
+		if toolFlag == "" {
 			fmt.Fprintf(stdout, "Apply: backlot agents setup --tool %s --apply\n", agent.ID())
 			continue
 		}
@@ -109,11 +102,16 @@ func runAgentsSetup(args []string, stdout, stderr io.Writer) error {
 	return nil
 }
 
-func printAgentsUsage(w io.Writer) {
-	fmt.Fprintln(w, "Usage: backlot agents <command> [options]")
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "Commands:")
-	fmt.Fprintln(w, "  setup    [--root PATH] [--tool codex|claude] [--apply]")
+func agentsSetupSpec() *chomp.Spec {
+	return chomp.New("backlot", "agents", "setup").
+		String("root", chomp.ValueName("path"), chomp.Description("Backlot root path")).
+		String("tool", chomp.ValueName("codex|claude"), chomp.Description("agent tool")).
+		Bool("apply", chomp.Description("apply persistent config changes")).
+		Positionals(0, 0)
+}
+
+func printAgentsSetupUsage(w io.Writer) {
+	printSpecUsage(w, agentsSetupSpec())
 }
 
 func selectedAgents(tool string) ([]agents.Agent, error) {

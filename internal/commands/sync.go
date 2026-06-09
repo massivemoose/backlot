@@ -2,7 +2,6 @@ package commands
 
 import (
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -12,49 +11,24 @@ import (
 	"github.com/massivemoose/backlot/internal/autosync"
 	"github.com/massivemoose/backlot/internal/gitutil"
 	"github.com/massivemoose/backlot/internal/paths"
+	"github.com/massivemoose/chomp"
 )
 
 func runSync(args []string, stdout, stderr io.Writer) error {
-	fs := newFlagSet("sync", stderr)
-	fs.Usage = func() {
-		fmt.Fprintln(stderr, "Usage:")
-		fmt.Fprintln(stderr, "  backlot sync [--root PATH] [-m MESSAGE] [--quiet]")
-		fmt.Fprintln(stderr, "  backlot sync [--root PATH] --continue")
-		fmt.Fprintln(stderr, "  backlot sync [--root PATH] --abort")
-		fmt.Fprintln(stderr)
-		fmt.Fprintln(stderr, "Examples:")
-		fmt.Fprintln(stderr, "  backlot sync")
-		fmt.Fprintln(stderr, "  backlot sync -m \"Update private notes\"")
-		fmt.Fprintln(stderr, "  # Continue after resolving a conflict:")
-		fmt.Fprintln(stderr, "  backlot sync --continue")
-		fmt.Fprintln(stderr, "  # Abort an interrupted sync:")
-		fmt.Fprintln(stderr, "  backlot sync --abort")
-	}
-	rootFlag := fs.String("root", "", "Backlot root path")
-	message := fs.String("m", "Update backlot state", "commit message")
-	continueFlag := fs.Bool("continue", false, "continue an interrupted Backlot sync")
-	abortFlag := fs.Bool("abort", false, "abort an interrupted Backlot sync")
-	quiet := fs.Bool("quiet", false, "suppress normal sync output")
-	if err := fs.Parse(args); err != nil {
+	result, err := syncSpec().Parse(args)
+	if err != nil {
 		return err
 	}
-	if fs.NArg() != 0 {
-		return flag.ErrHelp
-	}
-	if *continueFlag && *abortFlag {
+	continueFlag := result.Bool("continue")
+	abortFlag := result.Bool("abort")
+	if continueFlag && abortFlag {
 		return fmt.Errorf("choose only one of --continue or --abort")
 	}
-	messageProvided := false
-	fs.Visit(func(f *flag.Flag) {
-		if f.Name == "m" {
-			messageProvided = true
-		}
-	})
-	if (*continueFlag || *abortFlag) && messageProvided {
+	if (continueFlag || abortFlag) && result.IsSet("message") {
 		return fmt.Errorf("-m is only supported for normal backlot sync")
 	}
 
-	root, err := paths.BacklotRoot(*rootFlag)
+	root, err := paths.BacklotRoot(result.String("root"))
 	if err != nil {
 		return err
 	}
@@ -69,22 +43,37 @@ func runSync(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 	defer release()
-	if *abortFlag {
-		if err := runSyncAbort(root, stdout, *quiet); err != nil {
+	quiet := result.Bool("quiet")
+	if abortFlag {
+		if err := runSyncAbort(root, stdout, quiet); err != nil {
 			return err
 		}
 		return recordManualSyncAbort(root)
 	}
-	if *continueFlag {
-		if err := runSyncContinue(root, stdout, *quiet); err != nil {
+	if continueFlag {
+		if err := runSyncContinue(root, stdout, quiet); err != nil {
 			return err
 		}
 		return recordManualSyncSuccess(root)
 	}
-	if err := runNormalSync(root, *message, stdout, *quiet); err != nil {
+	if err := runNormalSync(root, result.String("message"), stdout, quiet); err != nil {
 		return err
 	}
 	return recordManualSyncSuccess(root)
+}
+
+func syncSpec() *chomp.Spec {
+	return chomp.New("backlot", "sync").
+		String("root", chomp.ValueName("path"), chomp.Description("Backlot root path")).
+		String("message", chomp.Short('m'), chomp.ValueName("message"), chomp.Default("Update backlot state"), chomp.Description("commit message")).
+		Bool("continue", chomp.Description("continue an interrupted Backlot sync")).
+		Bool("abort", chomp.Description("abort an interrupted Backlot sync")).
+		Bool("quiet", chomp.Description("suppress normal sync output")).
+		Positionals(0, 0)
+}
+
+func printSyncUsage(w io.Writer) {
+	printSpecUsage(w, syncSpec())
 }
 
 func runNormalSync(root, message string, stdout io.Writer, quiet bool) error {
