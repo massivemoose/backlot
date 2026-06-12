@@ -17,7 +17,8 @@ import (
 var (
 	autosyncHomeDir     = os.UserHomeDir
 	autosyncNow         = time.Now
-	autosyncNotify      = notifyMacOS
+	autosyncNotify      = notifyAutosync
+	autosyncLookPath    = exec.LookPath
 	autosyncWriteLog    = writeAutosyncLog
 	autosyncAbortRebase = func(root string) error {
 		_, err := gitutil.RunGit(root, "rebase", "--abort")
@@ -30,7 +31,7 @@ func runManagedAutosync(root string) error {
 	if err != nil {
 		return err
 	}
-	managedPaths, err := autosync.ResolvePaths(home, root)
+	managedPaths, err := autosync.ResolvePathsForPlatform(home, root, autosyncGOOS)
 	if err != nil {
 		return err
 	}
@@ -163,6 +164,17 @@ func removeAutosyncLog(path string) error {
 	return nil
 }
 
+func notifyAutosync(title, body string) error {
+	switch autosyncGOOS {
+	case "darwin":
+		return notifyMacOS(title, body)
+	case "linux":
+		return notifyLinux(title, body)
+	default:
+		return nil
+	}
+}
+
 func notifyMacOS(title, body string) error {
 	const script = `on run argv
 display notification (item 2 of argv) with title (item 1 of argv)
@@ -170,6 +182,18 @@ end run`
 	cmd := exec.Command("/usr/bin/osascript", "-e", script, title, body)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("osascript notification failed: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
+func notifyLinux(title, body string) error {
+	binary, err := autosyncLookPath("notify-send")
+	if err != nil {
+		return nil
+	}
+	cmd := exec.Command(binary, title, body)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("notify-send failed: %w: %s", err, strings.TrimSpace(string(output)))
 	}
 	return nil
 }

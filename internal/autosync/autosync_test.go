@@ -19,11 +19,11 @@ func TestResolvePathsUsesStableCanonicalRootIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	direct, err := ResolvePaths(home, root)
+	direct, err := ResolvePathsForPlatform(home, root, "darwin")
 	if err != nil {
 		t.Fatalf("ResolvePaths direct returned error: %v", err)
 	}
-	linked, err := ResolvePaths(home, link)
+	linked, err := ResolvePathsForPlatform(home, link, "darwin")
 	if err != nil {
 		t.Fatalf("ResolvePaths linked returned error: %v", err)
 	}
@@ -42,7 +42,7 @@ func TestResolvePathsAllowsMissingRoot(t *testing.T) {
 	home := t.TempDir()
 	root := filepath.Join(t.TempDir(), "missing")
 
-	paths, err := ResolvePaths(home, root)
+	paths, err := ResolvePathsForPlatform(home, root, "darwin")
 	if err != nil {
 		t.Fatalf("ResolvePaths returned error for missing root: %v", err)
 	}
@@ -56,8 +56,51 @@ func TestResolvePathsAllowsMissingRoot(t *testing.T) {
 	}
 }
 
+func TestResolvePathsForLinuxUsesSystemdUserPaths(t *testing.T) {
+	home := t.TempDir()
+	root := filepath.Join(t.TempDir(), "archive")
+	if err := os.Mkdir(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	paths, err := ResolvePathsForPlatform(home, root, "linux")
+	if err != nil {
+		t.Fatalf("ResolvePathsForPlatform returned error: %v", err)
+	}
+	if paths.Scheduler != SchedulerSystemdUser {
+		t.Fatalf("Scheduler = %q, want %q", paths.Scheduler, SchedulerSystemdUser)
+	}
+	if paths.RuntimeDir != filepath.Join(home, ".local", "state", "backlot", "autosync", paths.ID) {
+		t.Fatalf("RuntimeDir = %q, want XDG state dir", paths.RuntimeDir)
+	}
+	if paths.ConfigPath != filepath.Join(paths.RuntimeDir, "config.json") {
+		t.Fatalf("ConfigPath = %q, want runtime config", paths.ConfigPath)
+	}
+	if paths.StatePath != filepath.Join(paths.RuntimeDir, "last-run.json") {
+		t.Fatalf("StatePath = %q, want runtime state", paths.StatePath)
+	}
+	if paths.LogPath != filepath.Join(home, ".local", "state", "backlot", "autosync", "autosync-"+paths.ID+".log") {
+		t.Fatalf("LogPath = %q, want XDG state log", paths.LogPath)
+	}
+	if paths.ServiceName != paths.Label+".service" {
+		t.Fatalf("ServiceName = %q, want label-based service name", paths.ServiceName)
+	}
+	if paths.TimerName != paths.Label+".timer" {
+		t.Fatalf("TimerName = %q, want label-based timer name", paths.TimerName)
+	}
+	if paths.ServicePath != filepath.Join(home, ".config", "systemd", "user", paths.ServiceName) {
+		t.Fatalf("ServicePath = %q, want user systemd service path", paths.ServicePath)
+	}
+	if paths.TimerPath != filepath.Join(home, ".config", "systemd", "user", paths.TimerName) {
+		t.Fatalf("TimerPath = %q, want user systemd timer path", paths.TimerPath)
+	}
+	if paths.PlistPath != "" {
+		t.Fatalf("PlistPath = %q, want empty on Linux", paths.PlistPath)
+	}
+}
+
 func TestConfigRoundTripAndManagedOwnership(t *testing.T) {
-	paths, err := ResolvePaths(t.TempDir(), t.TempDir())
+	paths, err := ResolvePathsForPlatform(t.TempDir(), t.TempDir(), "darwin")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,6 +135,63 @@ func TestConfigRoundTripAndManagedOwnership(t *testing.T) {
 	got.PlistPath = filepath.Join(t.TempDir(), "foreign.plist")
 	if err := ValidateManagedConfig(got, paths); err == nil {
 		t.Fatal("ValidateManagedConfig accepted foreign plist path")
+	}
+}
+
+func TestSystemdConfigRoundTripAndManagedOwnership(t *testing.T) {
+	paths, err := ResolvePathsForPlatform(t.TempDir(), t.TempDir(), "linux")
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := Config{
+		SchemaVersion:   SchemaVersion,
+		ManagedBy:       ManagedBy,
+		Scheduler:       SchedulerSystemdUser,
+		Root:            paths.Root,
+		Binary:          "/usr/local/bin/backlot",
+		Label:           paths.Label,
+		ServiceName:     paths.ServiceName,
+		TimerName:       paths.TimerName,
+		ServicePath:     paths.ServicePath,
+		TimerPath:       paths.TimerPath,
+		IntervalSeconds: 900,
+	}
+	if err := WriteConfig(paths.ConfigPath, config); err != nil {
+		t.Fatalf("WriteConfig returned error: %v", err)
+	}
+	got, err := LoadConfig(paths.ConfigPath)
+	if err != nil {
+		t.Fatalf("LoadConfig returned error: %v", err)
+	}
+	if got != config {
+		t.Fatalf("LoadConfig = %+v, want %+v", got, config)
+	}
+	if err := ValidateManagedConfig(got, paths); err != nil {
+		t.Fatalf("ValidateManagedConfig returned error: %v", err)
+	}
+
+	got.ServicePath = filepath.Join(t.TempDir(), "foreign.service")
+	if err := ValidateManagedConfig(got, paths); err == nil {
+		t.Fatal("ValidateManagedConfig accepted foreign service path")
+	}
+}
+
+func TestMissingSchedulerConfigDefaultsToLaunchd(t *testing.T) {
+	paths, err := ResolvePathsForPlatform(t.TempDir(), t.TempDir(), "darwin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := Config{
+		SchemaVersion:   SchemaVersion,
+		ManagedBy:       ManagedBy,
+		Root:            paths.Root,
+		Binary:          "/usr/local/bin/backlot",
+		Label:           paths.Label,
+		PlistPath:       paths.PlistPath,
+		IntervalSeconds: 900,
+	}
+	if err := ValidateManagedConfig(config, paths); err != nil {
+		t.Fatalf("ValidateManagedConfig rejected legacy launchd config: %v", err)
 	}
 }
 
@@ -149,7 +249,7 @@ func TestStateConflictPausesOnceAndSuccessClearsFailures(t *testing.T) {
 }
 
 func TestStateRoundTripAndRuntimeRemoval(t *testing.T) {
-	paths, err := ResolvePaths(t.TempDir(), t.TempDir())
+	paths, err := ResolvePathsForPlatform(t.TempDir(), t.TempDir(), "darwin")
 	if err != nil {
 		t.Fatal(err)
 	}

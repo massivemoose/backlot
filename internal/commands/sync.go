@@ -443,7 +443,7 @@ func updateManagedAutosyncState(root string, update func(*autosync.State)) error
 	if err != nil {
 		return nil
 	}
-	managedPaths, err := autosync.ResolvePaths(home, root)
+	managedPaths, err := autosync.ResolvePathsForPlatform(home, root, autosyncGOOS)
 	if err != nil {
 		return nil
 	}
