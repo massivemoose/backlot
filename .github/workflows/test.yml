@@ -5,6 +5,7 @@ on:
     branches:
       - main
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -23,3 +24,95 @@ jobs:
 
       - name: Test
         run: go test ./...
+
+  linux-autosync-smoke:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build Backlot
+        run: go build -o "$RUNNER_TEMP/backlot" .
+
+      - name: Prepare systemd user manager
+        run: |
+          set -euo pipefail
+          uid="$(id -u)"
+          sudo loginctl enable-linger "$USER"
+          sudo install -d -o "$uid" -g "$(id -g)" -m 700 "/run/user/$uid"
+          sudo systemctl start "user@$uid.service"
+          echo "XDG_RUNTIME_DIR=/run/user/$uid" >> "$GITHUB_ENV"
+          XDG_RUNTIME_DIR="/run/user/$uid" systemctl --user status >/dev/null
+
+      - name: Smoke test Linux autosync
+        env:
+          BACKLOT_BIN: ${{ runner.temp }}/backlot
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          state="$tmp/state"
+          timer_name=""
+          service_name=""
+          trap 'if [ -n "$timer_name" ]; then systemctl --user status "$timer_name" --no-pager || true; fi; if [ -n "$service_name" ]; then systemctl --user status "$service_name" --no-pager || true; fi; if [ -n "$timer_name$service_name" ]; then journalctl --user -u "$timer_name" -u "$service_name" --no-pager || true; fi' ERR
+
+          "$BACKLOT_BIN" init --root "$state"
+          git -C "$state" config user.name "Backlot CI"
+          git -C "$state" config user.email "backlot-ci@example.invalid"
+          "$BACKLOT_BIN" autosync enable --root "$state" --interval 1m
+
+          timer_path="$(find "$HOME/.config/systemd/user" -name 'com.massivemoose.backlot.autosync.*.timer' -print -quit)"
+          test -n "$timer_path"
+          timer_name="$(basename "$timer_path")"
+          service_name="${timer_name%.timer}.service"
+
+          systemctl --user is-active --quiet "$timer_name"
+          systemctl --user start "$service_name"
+          "$BACKLOT_BIN" autosync status --root "$state" | tee "$tmp/status.txt"
+          grep -F "Last result:   success" "$tmp/status.txt"
+
+          "$BACKLOT_BIN" autosync disable --root "$state"
+          test ! -e "$HOME/.config/systemd/user/$timer_name"
+          test ! -e "$HOME/.config/systemd/user/$service_name"
+
+  macos-autosync-smoke:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build Backlot
+        run: go build -o "$RUNNER_TEMP/backlot" .
+
+      - name: Smoke test macOS autosync
+        env:
+          BACKLOT_BIN: ${{ runner.temp }}/backlot
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          state="$tmp/state"
+          label=""
+          trap 'if [ -n "$label" ]; then launchctl print "gui/$(id -u)/$label" || true; fi' ERR
+
+          "$BACKLOT_BIN" init --root "$state"
+          "$BACKLOT_BIN" autosync enable --root "$state" --interval 1m
+
+          plist_path="$(find "$HOME/Library/LaunchAgents" -name 'com.massivemoose.backlot.autosync.*.plist' -print -quit)"
+          test -n "$plist_path"
+          label="$(basename "$plist_path" .plist)"
+
+          launchctl print "gui/$(id -u)/$label" >/dev/null
+          "$BACKLOT_BIN" autosync status --root "$state"
+
+          "$BACKLOT_BIN" autosync disable --root "$state"
+          test ! -e "$plist_path"
