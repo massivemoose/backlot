@@ -76,10 +76,7 @@ func runAutosyncEnable(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	interval, err := time.ParseDuration(result.String("interval"))
-	if err != nil {
-		return fmt.Errorf("parse autosync interval: %w", err)
-	}
+	interval := result.Duration("interval")
 	if interval < time.Minute {
 		return fmt.Errorf("autosync interval must be at least 1m")
 	}
@@ -348,7 +345,7 @@ func parseAutosyncRootOnly(command string, args []string) (string, error) {
 func autosyncEnableSpec() *chomp.Spec {
 	return chomp.New("backlot", "autosync", "enable").
 		String("root", chomp.ValueName("path"), chomp.Description("Backlot root path")).
-		String("interval", chomp.ValueName("duration"), chomp.Default(defaultAutosyncInterval.String()), chomp.Description("automatic sync interval")).
+		Duration("interval", chomp.Default(defaultAutosyncInterval.String()), chomp.Description("automatic sync interval")).
 		Positionals(0, 0)
 }
 
