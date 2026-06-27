@@ -227,6 +227,79 @@ func TestUnlockSkipsTrackedSymlinks(t *testing.T) {
 	}
 }
 
+func TestStatusReportsEncryptionState(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink behavior differs on Windows")
+	}
+	root, public := newAttachedEncryptedArchive(t)
+	withChdir(t, public, func() {
+		var out, errOut bytes.Buffer
+		if code := Run([]string{"status", "--root", root}, &out, &errOut); code != 0 {
+			t.Fatalf("status exit code = %d, stderr = %s", code, errOut.String())
+		}
+		if !strings.Contains(out.String(), "Encryption:   unlocked") {
+			t.Fatalf("status output missing unlocked encryption:\n%s", out.String())
+		}
+	})
+
+	removeLocalKey(t, root)
+	withChdir(t, public, func() {
+		var out, errOut bytes.Buffer
+		if code := Run([]string{"status", "--root", root}, &out, &errOut); code != 0 {
+			t.Fatalf("status locked exit code = %d, stderr = %s", code, errOut.String())
+		}
+		if !strings.Contains(out.String(), "Encryption:   locked") {
+			t.Fatalf("status output missing locked encryption:\n%s", out.String())
+		}
+	})
+}
+
+func TestDoctorReportsLockedEncryption(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink behavior differs on Windows")
+	}
+	root, public := newAttachedEncryptedArchive(t)
+	removeLocalKey(t, root)
+	withChdir(t, public, func() {
+		var out, errOut bytes.Buffer
+		if code := Run([]string{"doctor", "--root", root}, &out, &errOut); code == 0 {
+			t.Fatalf("doctor succeeded with locked encryption, stdout = %s", out.String())
+		}
+		if !strings.Contains(out.String(), "Backlot archive encryption is locked") ||
+			!strings.Contains(out.String(), "backlot unlock --root") {
+			t.Fatalf("doctor output missing locked encryption guidance:\n%s", out.String())
+		}
+	})
+}
+
+func TestCloneReportsEncryptedArchive(t *testing.T) {
+	tmp := t.TempDir()
+	seed := filepath.Join(tmp, "seed")
+	clone := filepath.Join(tmp, "clone")
+	mustRunBacklotInit(t, seed)
+	configureGitIdentity(t, seed)
+	if err := os.WriteFile(filepath.Join(seed, "secret.txt"), []byte("secret\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	restore := withEncryptionFilterHelper(t)
+	defer restore()
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"lock", "--root", seed}, &out, &errOut); code != 0 {
+		t.Fatalf("lock exit code = %d, stderr = %s", code, errOut.String())
+	}
+	mustRunGit(t, seed, "commit", "-m", "Encrypt archive")
+
+	out.Reset()
+	errOut.Reset()
+	if code := Run([]string{"clone", seed, "--root", clone}, &out, &errOut); code != 0 {
+		t.Fatalf("clone exit code = %d, stderr = %s", code, errOut.String())
+	}
+	if !strings.Contains(out.String(), "Encryption: locked") ||
+		!strings.Contains(out.String(), "backlot unlock --root") {
+		t.Fatalf("clone output missing encrypted guidance:\n%s", out.String())
+	}
+}
+
 func TestBacklotFilterHelper(t *testing.T) {
 	if os.Getenv("BACKLOT_FILTER_HELPER") != "1" {
 		return
@@ -295,4 +368,44 @@ func testCommandKey() []byte {
 		key[i] = byte(i + 11)
 	}
 	return key
+}
+
+func newAttachedEncryptedArchive(t *testing.T) (string, string) {
+	t.Helper()
+	tmp := t.TempDir()
+	root := filepath.Join(tmp, "state")
+	public := filepath.Join(tmp, "public")
+	mustRunBacklotInit(t, root)
+	configureGitIdentity(t, root)
+	mustRunGit(t, tmp, "init", public)
+	mustRunGit(t, public, "remote", "add", "origin", "git@github.com:massivemoose/ovek.git")
+	restore := withEncryptionFilterHelper(t)
+	defer restore()
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"lock", "--root", root}, &out, &errOut); code != 0 {
+		t.Fatalf("lock exit code = %d, stderr = %s", code, errOut.String())
+	}
+	withChdir(t, public, func() {
+		out.Reset()
+		errOut.Reset()
+		if code := Run([]string{"attach", "--root", root}, &out, &errOut); code != 0 {
+			t.Fatalf("attach exit code = %d, stderr = %s", code, errOut.String())
+		}
+	})
+	return root, public
+}
+
+func removeLocalKey(t *testing.T, root string) {
+	t.Helper()
+	meta, err := encryption.LoadMetadata(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyPath, err := encryption.LocalKeyPath(root, meta.VaultID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(keyPath); err != nil {
+		t.Fatal(err)
+	}
 }

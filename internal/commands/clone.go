@@ -45,6 +45,13 @@ func runClone(args []string, stdout, stderr io.Writer) error {
 	fmt.Fprintln(stdout, "Cloned Backlot archive")
 	fmt.Fprintf(stdout, "Root:   %s\n", root)
 	fmt.Fprintf(stdout, "Origin: %s\n", origin)
+	encryption := collectArchiveEncryptionState(root)
+	if encryption.Status != encryptionDisabled {
+		fmt.Fprintf(stdout, "Encryption: %s\n", encryption.Status)
+		if encryption.Recovery != "" {
+			fmt.Fprintf(stdout, "Recovery: %s\n", encryption.Recovery)
+		}
+	}
 	return nil
 }
 
