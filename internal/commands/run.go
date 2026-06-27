@@ -116,6 +116,12 @@ func backlotRouter(stdout, stderr io.Writer, build BuildInfo) *chomp.Router {
 			usage:   printInitUsage,
 		},
 		runnableCommand{
+			name:    "lock",
+			summary: "Encrypt the Backlot archive",
+			run:     func(args []string) error { return runLock(args, stdout, stderr) },
+			usage:   printLockUsage,
+		},
+		runnableCommand{
 			name:    "protect",
 			summary: "Install a pre-commit private-state guard",
 			run:     func(args []string) error { return runProtect(args, stdout, stderr) },
@@ -133,6 +139,12 @@ func backlotRouter(stdout, stderr io.Writer, build BuildInfo) *chomp.Router {
 			summary: "Sync the Backlot archive",
 			run:     func(args []string) error { return runSync(args, stdout, stderr) },
 			usage:   printSyncUsage,
+		},
+		runnableCommand{
+			name:    "unlock",
+			summary: "Unlock an encrypted Backlot archive",
+			run:     func(args []string) error { return runUnlock(args, stdout, stderr) },
+			usage:   printUnlockUsage,
 		},
 		runnableCommand{
 			name:    "version",

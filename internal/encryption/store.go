@@ -1,6 +1,7 @@
 package encryption
 
 import (
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -157,4 +158,20 @@ func DecodeRecoveryKey(text string) ([]byte, error) {
 		return nil, err
 	}
 	return key, nil
+}
+
+func GenerateKey() ([]byte, error) {
+	key := make([]byte, KeySize)
+	if _, err := rand.Read(key); err != nil {
+		return nil, err
+	}
+	return key, nil
+}
+
+func GenerateID() (string, error) {
+	data := make([]byte, 16)
+	if _, err := rand.Read(data); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(data), nil
 }
