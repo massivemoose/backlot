@@ -134,6 +134,42 @@ backlot sync --abort
 Conflict resolution is manual for now so Backlot does not guess which private
 notes to keep.
 
+## Local Archive Encryption
+
+Backlot can encrypt the archive Git blobs while keeping your `.backlot/`
+worktree plaintext for you and your tools:
+
+```sh
+backlot lock
+```
+
+`lock` writes archive metadata, configures local Git filters, stages the archive
+for renormalization, and prints a recovery key once. Store that key somewhere
+safe. It is base64url-encoded key material; if you lose it and the local key
+store is gone, Backlot cannot recover encrypted archive data.
+
+After locking, run:
+
+```sh
+backlot sync
+```
+
+On another machine, clone the archive and unlock it with the saved key:
+
+```sh
+backlot clone git@github.com:you/backlot-archive.git
+backlot unlock --recovery-key-file ~/backlot-recovery.key
+```
+
+v0 encryption is local and self-managed. The local key is stored under the
+archive Git directory with `0600` permissions. Backlot does not use hosted
+recovery, macOS Keychain, Secret Service, or BIP-39 recovery phrases.
+
+Encryption does not hide Git metadata. Remotes, filenames, tree shape, commit
+history, commit messages, timestamps, and approximate object sizes remain
+visible. Locking also does not rewrite old history; archive commits made before
+`backlot lock` may still contain plaintext.
+
 ## Automatic Sync On macOS And Linux
 
 Auto-sync is opt-in background sync for macOS and Linux. macOS uses a
@@ -303,6 +339,8 @@ backlot attach [--root PATH]
 backlot detach [--root PATH]
 backlot starter apply [--root PATH] [--dry-run]
 backlot status [--root PATH]
+backlot lock [--root PATH]
+backlot unlock [--root PATH] [--recovery-key-file PATH]
 backlot sync [--root PATH] [-m MESSAGE] [--quiet]
 backlot sync [--root PATH] --continue
 backlot sync [--root PATH] --abort
@@ -322,6 +360,8 @@ backlot version
 - `detach` removes the current repo's Backlot symlink and local exclude entries.
 - `starter apply` adds missing custom starter paths to marked project workspaces.
 - `status` shows the current repo's Backlot state.
+- `lock` enables local archive encryption and prints the recovery key once.
+- `unlock` restores local key access and plaintext worktrees for encrypted archives.
 - `sync` pulls, commits, rebases, and pushes the private archive; `--continue`
   and `--abort` recover interrupted rebase conflicts, while `--quiet`
   suppresses normal success output.
@@ -345,7 +385,7 @@ Backlot root resolution order:
 - Backlot does not push from your project repo.
 - Backlot only syncs private archive contents when you run `backlot sync` or
   explicitly enable `backlot autosync`.
-- Backlot does not encrypt files.
+- `backlot lock` encrypts archive Git blobs. Worktrees stay plaintext.
 
 ### Why not `.gitignore`?
 
@@ -360,6 +400,10 @@ ignored on your machine without changing files that belong to the project.
 Private files stay local until you run `backlot sync`. When you sync, Backlot
 commits and pushes the contents of your Backlot archive to the `origin` remote
 configured for that archive. Use a private remote for anything sensitive.
+
+If archive encryption is enabled, pushed private file contents are encrypted
+Git blobs, but Git metadata remains visible. Keep the recovery key private and
+backed up.
 
 ## Cleanup
 
@@ -387,9 +431,9 @@ attached repos; those links become broken until you remove them.
 ## Limitations
 
 - macOS and Linux are supported.
-- Automatic sync is currently macOS-only.
+- Automatic sync supports macOS LaunchAgent and Linux systemd user timers.
 - Windows is not currently supported.
-- No encryption yet.
+- Encryption v0 does not rewrite pre-lock history or provide hosted recovery.
 - No daemon.
 - No hosted sync.
 - Requires Git.
