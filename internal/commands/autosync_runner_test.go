@@ -215,6 +215,23 @@ func TestManagedAutosyncCountsArchivePreflightFailures(t *testing.T) {
 	}
 }
 
+func TestManagedAutosyncRecordsEncryptionFailure(t *testing.T) {
+	home := t.TempDir()
+	state := newEncryptedArchive(t)
+	removeLocalKey(t, state)
+	writeManagedAutosyncConfig(t, home, state)
+	restore := stubAutosyncEnvironment(t, home, func(_, _ string) error { return nil })
+	defer restore()
+
+	if err := runManagedAutosync(state); err != nil {
+		t.Fatalf("runManagedAutosync returned error: %v", err)
+	}
+	got := readAutosyncState(t, home, state)
+	if got.FailureCategory != "encryption" || !strings.HasPrefix(got.RecoveryCommand, "backlot unlock --root ") {
+		t.Fatalf("autosync state = %+v, want encryption recovery", got)
+	}
+}
+
 func TestManagedAutosyncBusyPreservesExistingFailureState(t *testing.T) {
 	home := t.TempDir()
 	state := filepath.Join(t.TempDir(), "state")

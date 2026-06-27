@@ -105,7 +105,10 @@ func collectAutosyncHealth(root string) (autosyncHealth, error) {
 	if state.Result == autosync.ResultFailed {
 		health.Summary = "failed: " + state.FailureCategory
 		health.Problem = "Auto-sync last run failed: " + state.FailureCategory
-		health.Recovery = fmt.Sprintf("backlot autosync status --root %s", root)
+		health.Recovery = state.RecoveryCommand
+		if health.Recovery == "" {
+			health.Recovery = fmt.Sprintf("backlot autosync status --root %s", root)
+		}
 	}
 	return health, nil
 }

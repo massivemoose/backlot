@@ -115,6 +115,9 @@ func handleManagedConflict(managedPaths autosync.Paths, state autosync.State, fa
 
 func recordManagedFailure(managedPaths autosync.Paths, state *autosync.State, category string, failure error, now time.Time) error {
 	notify := state.RecordFailure(now, category, failure.Error())
+	if category == "encryption" {
+		state.RecoveryCommand = fmt.Sprintf("backlot unlock --root %s", managedPaths.Root)
+	}
 	if err := autosync.WriteState(managedPaths.StatePath, *state); err != nil {
 		return err
 	}

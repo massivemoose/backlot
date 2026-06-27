@@ -300,6 +300,55 @@ func TestCloneReportsEncryptedArchive(t *testing.T) {
 	}
 }
 
+func TestSyncFailsBeforeGitFiltersWhenEncryptedArchiveIsLocked(t *testing.T) {
+	root := newEncryptedArchive(t)
+	removeLocalKey(t, root)
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"sync", "--root", root, "--quiet"}, &out, &errOut); code == 0 {
+		t.Fatalf("sync succeeded with locked archive, stdout = %s", out.String())
+	}
+	if !strings.Contains(errOut.String(), "Backlot archive encryption is locked") ||
+		!strings.Contains(errOut.String(), "backlot unlock --root") {
+		t.Fatalf("sync stderr missing encryption guidance:\n%s", errOut.String())
+	}
+}
+
+func TestSyncFailsWhenEncryptionAttributesAreInactive(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "state")
+	mustRunBacklotInit(t, root)
+	configureGitIdentity(t, root)
+	if err := os.WriteFile(filepath.Join(root, "secret.txt"), []byte("secret\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	restore := withEncryptionFilterHelper(t)
+	defer restore()
+
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"lock", "--root", root}, &out, &errOut); code != 0 {
+		t.Fatalf("lock exit code = %d, stderr = %s", code, errOut.String())
+	}
+	mustRunGit(t, root, "commit", "-m", "Encrypt archive")
+	if err := os.WriteFile(filepath.Join(root, ".gitattributes"), []byte("README.md -filter -diff\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "secret.txt"), []byte("plaintext leak\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out.Reset()
+	errOut.Reset()
+	if code := Run([]string{"sync", "--root", root, "--quiet"}, &out, &errOut); code == 0 {
+		t.Fatalf("sync succeeded with inactive encryption attributes, stdout = %s", out.String())
+	}
+	if !strings.Contains(errOut.String(), "Backlot archive encryption is misconfigured") {
+		t.Fatalf("sync stderr = %q, want encryption misconfiguration", errOut.String())
+	}
+	if got := runGitOutput(t, root, "diff", "--cached", "--name-only"); got != "" {
+		t.Fatalf("sync staged files despite inactive attributes: %q", got)
+	}
+}
+
 func TestBacklotFilterHelper(t *testing.T) {
 	if os.Getenv("BACKLOT_FILTER_HELPER") != "1" {
 		return

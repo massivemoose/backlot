@@ -85,6 +85,9 @@ func runNormalSync(root, message string, stdout io.Writer, quiet bool) error {
 	if err := ensureNoGitOperationInProgress(root); err != nil {
 		return err
 	}
+	if err := ensureArchiveEncryptionReady(root); err != nil {
+		return err
+	}
 	status, err := gitutil.RunGit(root, "status", "--short")
 	if err != nil {
 		return syncGitError("status check", root, err)
@@ -112,6 +115,9 @@ func runNormalSync(root, message string, stdout io.Writer, quiet bool) error {
 		}
 		if _, err := gitutil.RunGit(root, "pull", "--rebase"); err != nil {
 			return syncRebaseError(root, err)
+		}
+		if err := ensureArchiveEncryptionReady(root); err != nil {
+			return err
 		}
 		if _, err := gitutil.RunGit(root, "push"); err != nil {
 			return syncGitError("push", root, err)
@@ -150,6 +156,9 @@ func runNormalSync(root, message string, stdout io.Writer, quiet bool) error {
 	}
 	if _, err := gitutil.RunGit(root, "pull", "--rebase"); err != nil {
 		return syncRebaseError(root, err)
+	}
+	if err := ensureArchiveEncryptionReady(root); err != nil {
+		return err
 	}
 	if _, err := gitutil.RunGit(root, "push"); err != nil {
 		return syncGitError("push", root, err)
@@ -274,6 +283,31 @@ func syncGitError(operation string, root string, err error) error {
 	return &syncFailure{
 		Category: operation,
 		err:      fmt.Errorf("%s failed while syncing Backlot root %s: %w", operation, root, err),
+	}
+}
+
+func ensureArchiveEncryptionReady(root string) error {
+	state := collectArchiveEncryptionState(root)
+	switch state.Status {
+	case encryptionDisabled, encryptionUnlocked:
+		return nil
+	case encryptionLocked, encryptionMisconfigured:
+		message := state.Problem
+		if message == "" {
+			message = "Backlot archive encryption is not ready"
+		}
+		if state.Err != nil {
+			message += ": " + state.Err.Error()
+		}
+		if state.Recovery != "" {
+			message += "\nRecovery: " + state.Recovery
+		}
+		return &syncFailure{
+			Category: "encryption",
+			err:      fmt.Errorf("%s", message),
+		}
+	default:
+		return nil
 	}
 }
 
