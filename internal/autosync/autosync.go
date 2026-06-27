@@ -8,12 +8,16 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"time"
 )
 
 const (
 	SchemaVersion = 1
 	ManagedBy     = "backlot"
+
+	SchedulerLaunchd     = "launchd"
+	SchedulerSystemdUser = "systemd-user"
 
 	ResultSuccess       = "success"
 	ResultFailed        = "failed"
@@ -27,23 +31,33 @@ const (
 )
 
 type Paths struct {
-	ID         string
-	Label      string
-	Root       string
-	RuntimeDir string
-	ConfigPath string
-	StatePath  string
-	LogPath    string
-	PlistPath  string
+	ID          string
+	Label       string
+	Scheduler   string
+	Root        string
+	RuntimeDir  string
+	ConfigPath  string
+	StatePath   string
+	LogPath     string
+	PlistPath   string
+	ServiceName string
+	TimerName   string
+	ServicePath string
+	TimerPath   string
 }
 
 type Config struct {
 	SchemaVersion   int    `json:"schema_version"`
 	ManagedBy       string `json:"managed_by"`
+	Scheduler       string `json:"scheduler,omitempty"`
 	Root            string `json:"root"`
 	Binary          string `json:"binary"`
 	Label           string `json:"label"`
-	PlistPath       string `json:"plist_path"`
+	PlistPath       string `json:"plist_path,omitempty"`
+	ServiceName     string `json:"service_name,omitempty"`
+	TimerName       string `json:"timer_name,omitempty"`
+	ServicePath     string `json:"service_path,omitempty"`
+	TimerPath       string `json:"timer_path,omitempty"`
 	IntervalSeconds int    `json:"interval_seconds"`
 }
 
@@ -66,6 +80,10 @@ type State struct {
 }
 
 func ResolvePaths(homeDir, root string) (Paths, error) {
+	return ResolvePathsForPlatform(homeDir, root, runtime.GOOS)
+}
+
+func ResolvePathsForPlatform(homeDir, root, goos string) (Paths, error) {
 	absRoot, err := filepath.Abs(root)
 	if err != nil {
 		return Paths{}, err
@@ -78,10 +96,31 @@ func ResolvePaths(homeDir, root string) (Paths, error) {
 	sum := sha256.Sum256([]byte(canonicalRoot))
 	id := hex.EncodeToString(sum[:8])
 	label := "com.massivemoose.backlot.autosync." + id
+	if goos == "linux" {
+		runtimeDir := filepath.Join(homeDir, ".local", "state", "backlot", "autosync", id)
+		serviceName := label + ".service"
+		timerName := label + ".timer"
+		unitDir := filepath.Join(homeDir, ".config", "systemd", "user")
+		return Paths{
+			ID:          id,
+			Label:       label,
+			Scheduler:   SchedulerSystemdUser,
+			Root:        canonicalRoot,
+			RuntimeDir:  runtimeDir,
+			ConfigPath:  filepath.Join(runtimeDir, "config.json"),
+			StatePath:   filepath.Join(runtimeDir, "last-run.json"),
+			LogPath:     filepath.Join(homeDir, ".local", "state", "backlot", "autosync", "autosync-"+id+".log"),
+			ServiceName: serviceName,
+			TimerName:   timerName,
+			ServicePath: filepath.Join(unitDir, serviceName),
+			TimerPath:   filepath.Join(unitDir, timerName),
+		}, nil
+	}
 	runtimeDir := filepath.Join(homeDir, "Library", "Application Support", "Backlot", "autosync", id)
 	return Paths{
 		ID:         id,
 		Label:      label,
+		Scheduler:  SchedulerLaunchd,
 		Root:       canonicalRoot,
 		RuntimeDir: runtimeDir,
 		ConfigPath: filepath.Join(runtimeDir, "config.json"),
@@ -119,8 +158,28 @@ func ValidateManagedConfig(config Config, paths Paths) error {
 	if config.ManagedBy != ManagedBy {
 		return fmt.Errorf("autosync configuration is not managed by Backlot")
 	}
-	if config.Root != paths.Root || config.Label != paths.Label || config.PlistPath != paths.PlistPath {
+	scheduler := config.Scheduler
+	if scheduler == "" {
+		scheduler = SchedulerLaunchd
+	}
+	if scheduler != paths.Scheduler {
 		return fmt.Errorf("autosync configuration does not match Backlot root %s", paths.Root)
+	}
+	if config.Root != paths.Root || config.Label != paths.Label {
+		return fmt.Errorf("autosync configuration does not match Backlot root %s", paths.Root)
+	}
+	switch scheduler {
+	case SchedulerLaunchd:
+		if config.PlistPath != paths.PlistPath {
+			return fmt.Errorf("autosync configuration does not match Backlot root %s", paths.Root)
+		}
+	case SchedulerSystemdUser:
+		if config.ServiceName != paths.ServiceName || config.TimerName != paths.TimerName ||
+			config.ServicePath != paths.ServicePath || config.TimerPath != paths.TimerPath {
+			return fmt.Errorf("autosync configuration does not match Backlot root %s", paths.Root)
+		}
+	default:
+		return fmt.Errorf("unsupported autosync scheduler %q", scheduler)
 	}
 	return nil
 }

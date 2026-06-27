@@ -20,7 +20,7 @@ func collectAutosyncHealth(root string) (autosyncHealth, error) {
 	if err != nil {
 		return autosyncHealth{}, err
 	}
-	managedPaths, err := autosync.ResolvePaths(home, root)
+	managedPaths, err := autosync.ResolvePathsForPlatform(home, root, autosyncGOOS)
 	if err != nil {
 		return autosyncHealth{}, err
 	}
@@ -37,15 +37,28 @@ func collectAutosyncHealth(root string) (autosyncHealth, error) {
 	if err := verifyAutosyncOwnership(managedPaths, true); err != nil {
 		return autosyncHealth{}, err
 	}
-	health := autosyncHealth{Enabled: true, Summary: "enabled"}
-	if info, err := os.Lstat(managedPaths.PlistPath); errors.Is(err, os.ErrNotExist) {
-		health.Summary = "configured but LaunchAgent is missing"
-		health.Problem = "Auto-sync LaunchAgent file is missing"
-		health.Recovery = fmt.Sprintf("backlot autosync enable --root %s", root)
-	} else if err != nil {
+	scheduler, err := autosyncSchedulerForConfig(config)
+	if err != nil {
 		return autosyncHealth{}, err
-	} else if !info.Mode().IsRegular() {
-		return autosyncHealth{}, fmt.Errorf("managed auto-sync file %s is not a regular file", managedPaths.PlistPath)
+	}
+	health := autosyncHealth{Enabled: true, Summary: "enabled"}
+	for _, path := range scheduler.managedFilePaths(managedPaths) {
+		if info, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
+			switch scheduler.kind() {
+			case autosync.SchedulerLaunchd:
+				health.Summary = "configured but LaunchAgent is missing"
+				health.Problem = "Auto-sync LaunchAgent file is missing"
+			default:
+				health.Summary = "configured but scheduler files are missing"
+				health.Problem = "Auto-sync scheduler files are missing"
+			}
+			health.Recovery = fmt.Sprintf("backlot autosync enable --root %s", root)
+			break
+		} else if err != nil {
+			return autosyncHealth{}, err
+		} else if !info.Mode().IsRegular() {
+			return autosyncHealth{}, fmt.Errorf("managed auto-sync file %s is not a regular file", path)
+		}
 	}
 	if _, err := os.Stat(config.Binary); errors.Is(err, os.ErrNotExist) {
 		health.Summary = "configured but binary is missing"
@@ -54,13 +67,18 @@ func collectAutosyncHealth(root string) (autosyncHealth, error) {
 	} else if err != nil {
 		return autosyncHealth{}, err
 	}
-	loaded, err := autosyncLoaded(managedPaths.Label)
+	loaded, err := scheduler.active(managedPaths)
 	if err != nil {
-		return autosyncHealth{}, fmt.Errorf("inspect auto-sync LaunchAgent: %w", err)
+		return autosyncHealth{}, fmt.Errorf("inspect auto-sync %s: %w", scheduler.managedFileNoun(), err)
 	}
 	if !loaded {
-		health.Summary = "configured but not loaded"
-		health.Problem = "Auto-sync LaunchAgent is not loaded"
+		if scheduler.kind() == autosync.SchedulerLaunchd {
+			health.Summary = "configured but not loaded"
+			health.Problem = "Auto-sync LaunchAgent is not loaded"
+		} else {
+			health.Summary = "configured but not active"
+			health.Problem = "Auto-sync scheduler is not active"
+		}
 		health.Recovery = fmt.Sprintf("backlot autosync enable --root %s", root)
 	}
 	state, err := autosync.LoadState(managedPaths.StatePath)

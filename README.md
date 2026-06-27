@@ -134,24 +134,25 @@ backlot sync --abort
 Conflict resolution is manual for now so Backlot does not guess which private
 notes to keep.
 
-## Automatic Sync On macOS
+## Automatic Sync On macOS And Linux
 
-Auto-sync is an opt-in macOS LaunchAgent that runs the same two-way archive
-sync in the background. Enable it with a Go-style duration:
+Auto-sync is opt-in background sync for macOS and Linux. macOS uses a
+Backlot-owned LaunchAgent, and Linux uses a `systemd --user` timer/service
+pair. Enable it with a Go-style duration:
 
 ```sh
 backlot autosync enable --interval 15m
 backlot autosync status
 ```
 
-The first run starts immediately. Later runs skip intervals while the Mac is
-asleep or a previous run is still active. Archives without an `origin` are
+The first run starts immediately. Later runs skip intervals while the machine
+is asleep or a previous run is still active. Archives without an `origin` are
 allowed, but auto-sync can only create local commits until a remote is added.
 
 An unattended conflict is handled differently from an interactive
 `backlot sync`: Backlot records the conflict, aborts the rebase to leave the
 archive clean, pauses future automatic runs, and sends one best-effort macOS
-notification. Run:
+or Linux desktop notification when available. Run:
 
 ```sh
 backlot sync
@@ -166,7 +167,7 @@ after three consecutive failures of the same kind. Because notifications may
 be denied or missed, `backlot autosync status`, `backlot status`, and
 `backlot doctor` remain the authoritative ways to check recovery state.
 
-Disable the managed LaunchAgent and remove its runtime records with:
+Disable the managed scheduler files and remove runtime records with:
 
 ```sh
 backlot autosync disable
@@ -324,8 +325,8 @@ backlot version
 - `sync` pulls, commits, rebases, and pushes the private archive; `--continue`
   and `--abort` recover interrupted rebase conflicts, while `--quiet`
   suppresses normal success output.
-- `autosync` manages an opt-in macOS LaunchAgent and reports durable failure
-  and conflict recovery state.
+- `autosync` manages opt-in macOS LaunchAgent or Linux systemd user timer
+  automation and reports durable failure and conflict recovery state.
 - `protect` installs a local pre-commit guard for `.backlot`.
 - `doctor` diagnoses setup issues.
 - `version` prints build metadata.

@@ -220,7 +220,7 @@ func TestManagedAutosyncBusyPreservesExistingFailureState(t *testing.T) {
 	state := filepath.Join(t.TempDir(), "state")
 	mustRunBacklotInit(t, state)
 	writeManagedAutosyncConfig(t, home, state)
-	managedPaths, err := autosync.ResolvePaths(home, state)
+	managedPaths, err := darwinAutosyncPaths(t, home, state)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -250,9 +250,24 @@ func TestManagedAutosyncBusyPreservesExistingFailureState(t *testing.T) {
 	}
 }
 
+func TestNotifyAutosyncLinuxIgnoresMissingNotifySend(t *testing.T) {
+	oldGOOS := autosyncGOOS
+	oldLookPath := autosyncLookPath
+	autosyncGOOS = "linux"
+	autosyncLookPath = func(string) (string, error) { return "", errors.New("not found") }
+	defer func() {
+		autosyncGOOS = oldGOOS
+		autosyncLookPath = oldLookPath
+	}()
+
+	if err := notifyAutosync("Backlot", "needs attention"); err != nil {
+		t.Fatalf("notifyAutosync returned error for missing notify-send: %v", err)
+	}
+}
+
 func writeManagedAutosyncConfig(t *testing.T, home, root string) {
 	t.Helper()
-	managedPaths, err := autosync.ResolvePaths(home, root)
+	managedPaths, err := darwinAutosyncPaths(t, home, root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -272,7 +287,7 @@ func writeManagedAutosyncConfig(t *testing.T, home, root string) {
 
 func readAutosyncState(t *testing.T, home, root string) autosync.State {
 	t.Helper()
-	managedPaths, err := autosync.ResolvePaths(home, root)
+	managedPaths, err := darwinAutosyncPaths(t, home, root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -288,13 +303,16 @@ func stubAutosyncEnvironment(t *testing.T, home string, notifier func(string, st
 	oldHome := autosyncHomeDir
 	oldNow := autosyncNow
 	oldNotify := autosyncNotify
+	oldGOOS := autosyncGOOS
 	autosyncHomeDir = func() (string, error) { return home, nil }
 	autosyncNow = func() time.Time { return time.Date(2026, 6, 4, 12, 0, 0, 0, time.UTC) }
 	autosyncNotify = notifier
+	autosyncGOOS = "darwin"
 	return func() {
 		autosyncHomeDir = oldHome
 		autosyncNow = oldNow
 		autosyncNotify = oldNotify
+		autosyncGOOS = oldGOOS
 	}
 }
 
