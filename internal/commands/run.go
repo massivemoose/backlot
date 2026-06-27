@@ -96,6 +96,20 @@ func backlotRouter(stdout, stderr io.Writer, build BuildInfo) *chomp.Router {
 			usage:   printDoctorUsage,
 		},
 		runnableCommand{
+			name:    "decrypt",
+			summary: "Decrypt a Backlot archive blob",
+			hidden:  true,
+			run:     func(args []string) error { return runDecrypt(args, os.Stdin, stdout) },
+			usage:   printDecryptUsage,
+		},
+		runnableCommand{
+			name:    "encrypt",
+			summary: "Encrypt a Backlot archive blob",
+			hidden:  true,
+			run:     func(args []string) error { return runEncrypt(args, os.Stdin, stdout) },
+			usage:   printEncryptUsage,
+		},
+		runnableCommand{
 			name:    "init",
 			summary: "Initialize a Backlot archive",
 			run:     func(args []string) error { return runInit(args, stdout, stderr) },
