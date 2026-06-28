@@ -15,7 +15,7 @@ const (
 	KeySize = 32
 
 	magic     = "BACKLOT-ENCRYPTED-V1"
-	algorithm = "XCHACHA20POLY1305-HMAC-SHA256"
+	Algorithm = "XCHACHA20POLY1305-HMAC-SHA256"
 )
 
 var (
@@ -90,7 +90,7 @@ func isEncryptedFor(key []byte, vaultID, keyID, path string, data []byte) bool {
 
 func ParseEnvelope(data []byte) (Envelope, error) {
 	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
-	if len(lines) != 6 || lines[0] != magic || lines[1] != algorithm {
+	if len(lines) != 6 || lines[0] != magic || lines[1] != Algorithm {
 		return Envelope{}, ErrInvalidBlob
 	}
 	if !strings.HasPrefix(lines[2], "vault:") || !strings.HasPrefix(lines[3], "key:") ||
@@ -116,7 +116,7 @@ func ParseEnvelope(data []byte) (Envelope, error) {
 func renderEnvelope(envelope Envelope) []byte {
 	return []byte(fmt.Sprintf("%s\n%s\nvault:%s\nkey:%s\nnonce:%s\nciphertext:%s\n",
 		magic,
-		algorithm,
+		Algorithm,
 		envelope.VaultID,
 		envelope.KeyID,
 		base64.RawURLEncoding.EncodeToString(envelope.Nonce),
@@ -152,7 +152,7 @@ func deriveNonce(key []byte, vaultID, keyID, path string, plaintext []byte) []by
 }
 
 func aad(vaultID, keyID, path string) []byte {
-	return []byte(magic + "\x00" + algorithm + "\x00" + vaultID + "\x00" + keyID + "\x00" + normalizePath(path))
+	return []byte(magic + "\x00" + Algorithm + "\x00" + vaultID + "\x00" + keyID + "\x00" + normalizePath(path))
 }
 
 func normalizePath(path string) string {
