@@ -12,10 +12,12 @@ import (
 	"github.com/massivemoose/chomp"
 )
 
-const starterNotes = `# Backlot notes
-
-Private project notes for this repository.
-`
+var builtInStarterFiles = map[string]string{
+	"handoff.md": "# Handoff\n\nEnd-of-task handoff for the next session.\n",
+	"state.md":   "# State\n\nCompact current project state for agents.\n",
+	"roadmap.md": "# Roadmap\n\nPrivate roadmap and task list.\n",
+	"files.md":   "# Files\n\nMap of important files and directories.\n",
+}
 
 func runAttach(args []string, stdout, stderr io.Writer) error {
 	result, err := attachSpec().Parse(args)
@@ -129,14 +131,12 @@ func ensureStarterState(root, stateDir string) (string, error) {
 	if err := os.MkdirAll(stateDir, 0o755); err != nil {
 		return "", err
 	}
-	notesPath := filepath.Join(stateDir, "notes.md")
-	if err := os.WriteFile(notesPath, []byte(starterNotes), 0o644); err != nil {
-		return "", err
+	for name, content := range builtInStarterFiles {
+		if err := os.WriteFile(filepath.Join(stateDir, name), []byte(content), 0o644); err != nil {
+			return "", err
+		}
 	}
-	if err := os.Mkdir(filepath.Join(stateDir, "llm"), 0o755); err != nil {
-		return "", err
-	}
-	if err := os.Mkdir(filepath.Join(stateDir, "scratch"), 0o755); err != nil {
+	if err := os.Mkdir(filepath.Join(stateDir, "plans"), 0o755); err != nil {
 		return "", err
 	}
 	return "built-in defaults", nil
