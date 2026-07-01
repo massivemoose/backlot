@@ -37,8 +37,12 @@ func runStatus(args []string, stdout, stderr io.Writer) error {
 	fmt.Fprintf(stdout, "Link:          %s\n", info.LinkDescription)
 	fmt.Fprintf(stdout, "Excluded:      %s\n", excluded)
 	fmt.Fprintf(stdout, "State repo:    %s\n", info.StateRepo)
+	fmt.Fprintf(stdout, "Encryption:   %s\n", info.Encryption)
 	if info.Recovery != "" {
 		fmt.Fprintf(stdout, "Recovery:      %s\n", info.Recovery)
+	}
+	if info.EncryptionRecovery != "" {
+		fmt.Fprintf(stdout, "Unlock:        %s\n", info.EncryptionRecovery)
 	}
 	if info.Autosync != "" {
 		fmt.Fprintf(stdout, "Auto-sync:     %s\n", info.Autosync)
@@ -60,18 +64,20 @@ func printStatusUsage(w io.Writer) {
 }
 
 type projectInfo struct {
-	RootFlag         string
-	BacklotRoot      string
-	RepoRoot         string
-	Origin           string
-	ProjectKey       string
-	StateDir         string
-	LinkDescription  string
-	Excluded         bool
-	StateRepo        string
-	Recovery         string
-	Autosync         string
-	AutosyncRecovery string
+	RootFlag           string
+	BacklotRoot        string
+	RepoRoot           string
+	Origin             string
+	ProjectKey         string
+	StateDir           string
+	LinkDescription    string
+	Excluded           bool
+	StateRepo          string
+	Recovery           string
+	Encryption         string
+	EncryptionRecovery string
+	Autosync           string
+	AutosyncRecovery   string
 }
 
 func collectProjectInfo(rootFlag string) (projectInfo, error) {
@@ -111,6 +117,9 @@ func collectProjectInfo(rootFlag string) (projectInfo, error) {
 	if info.StateRepo == "sync interrupted" {
 		info.Recovery = syncRecoverySummary()
 	}
+	encryption := collectArchiveEncryptionState(info.BacklotRoot)
+	info.Encryption = encryption.Status
+	info.EncryptionRecovery = encryption.Recovery
 	if health, err := collectAutosyncHealth(info.BacklotRoot); err != nil {
 		info.Autosync = "error: " + err.Error()
 	} else if health.Enabled {

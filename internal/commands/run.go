@@ -96,10 +96,31 @@ func backlotRouter(stdout, stderr io.Writer, build BuildInfo) *chomp.Router {
 			usage:   printDoctorUsage,
 		},
 		runnableCommand{
+			name:    "decrypt",
+			summary: "Decrypt a Backlot archive blob",
+			hidden:  true,
+			run:     func(args []string) error { return runDecrypt(args, os.Stdin, stdout) },
+			usage:   printDecryptUsage,
+		},
+		runnableCommand{
+			name:    "encrypt",
+			summary: "Encrypt a Backlot archive blob",
+			hidden:  true,
+			run:     func(args []string) error { return runEncrypt(args, os.Stdin, stdout) },
+			usage:   printEncryptUsage,
+		},
+		encryptionRouter(stdout, stderr),
+		runnableCommand{
 			name:    "init",
 			summary: "Initialize a Backlot archive",
 			run:     func(args []string) error { return runInit(args, stdout, stderr) },
 			usage:   printInitUsage,
+		},
+		runnableCommand{
+			name:    "lock",
+			summary: "Encrypt the Backlot archive",
+			run:     func(args []string) error { return runLock(args, stdout, stderr) },
+			usage:   printLockUsage,
 		},
 		runnableCommand{
 			name:    "protect",
@@ -119,6 +140,12 @@ func backlotRouter(stdout, stderr io.Writer, build BuildInfo) *chomp.Router {
 			summary: "Sync the Backlot archive",
 			run:     func(args []string) error { return runSync(args, stdout, stderr) },
 			usage:   printSyncUsage,
+		},
+		runnableCommand{
+			name:    "unlock",
+			summary: "Unlock an encrypted Backlot archive",
+			run:     func(args []string) error { return runUnlock(args, stdout, stderr) },
+			usage:   printUnlockUsage,
 		},
 		runnableCommand{
 			name:    "version",

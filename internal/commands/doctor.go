@@ -79,6 +79,19 @@ func runDoctor(args []string, stdout, stderr io.Writer) error {
 		} else {
 			failCheck("Backlot root is a Backlot archive")
 		}
+		encryption := collectArchiveEncryptionState(root)
+		switch encryption.Status {
+		case encryptionUnlocked:
+			pass(stdout, "Backlot archive encryption is unlocked")
+		case encryptionLocked, encryptionMisconfigured:
+			failCheck(encryption.Problem)
+			if encryption.Err != nil {
+				fmt.Fprintf(stdout, "  Error: %v\n", encryption.Err)
+			}
+			if encryption.Recovery != "" {
+				fmt.Fprintf(stdout, "  Recovery: %s\n", encryption.Recovery)
+			}
+		}
 		if gitutil.IsGitRepoRoot(root) {
 			if state, err := detectSyncState(root); err == nil && state.Interrupted() {
 				failCheck("Backlot sync was interrupted by a conflict")
