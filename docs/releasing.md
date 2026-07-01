@@ -23,6 +23,9 @@ Publish a release from the commit currently at `origin/main`:
 scripts/release v0.1.2
 ```
 
+Before tagging, update `CHANGELOG.md` so the `Unreleased` section is moved
+under the version being tagged.
+
 The release helper:
 
 1. Verifies the working tree is clean.

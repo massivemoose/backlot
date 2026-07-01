@@ -404,6 +404,9 @@ Backlot root resolution order:
   explicitly enable `backlot autosync`.
 - `backlot lock` encrypts archive Git blobs. Worktrees stay plaintext.
 
+For vulnerability reporting, see [SECURITY.md](SECURITY.md). For a plain
+threat model, see [docs/security.md](docs/security.md).
+
 ### Why not `.gitignore`?
 
 `.gitignore` is usually tracked. Writing to it would mutate the project repo and
@@ -420,7 +423,8 @@ configured for that archive. Use a private remote for anything sensitive.
 
 If archive encryption is enabled, pushed private file contents are encrypted
 Git blobs, but Git metadata remains visible. Keep the recovery key private and
-backed up.
+backed up. See [docs/security.md](docs/security.md) for what encryption does
+and does not protect.
 
 ## Cleanup
 
