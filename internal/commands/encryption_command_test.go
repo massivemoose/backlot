@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/massivemoose/backlot/internal/encryption"
+	"github.com/massivemoose/backlot/internal/gitutil"
 )
 
 func TestEncryptionFilterCommandsRoundTrip(t *testing.T) {
@@ -224,6 +225,51 @@ func TestUnlockSkipsTrackedSymlinks(t *testing.T) {
 		t.Fatalf("secret-link.txt is not a symlink: %v", err)
 	} else if target != "secret.txt" {
 		t.Fatalf("secret-link.txt target = %q, want secret.txt", target)
+	}
+}
+
+func TestEncryptionDisableRestoresPlaintextSync(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "state")
+	mustRunBacklotInit(t, root)
+	configureGitIdentity(t, root)
+	if err := os.WriteFile(filepath.Join(root, "secret.txt"), []byte("secret\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	restore := withEncryptionFilterHelper(t)
+	defer restore()
+
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"lock", "--root", root}, &out, &errOut); code != 0 {
+		t.Fatalf("lock exit code = %d, stderr = %s", code, errOut.String())
+	}
+	if !strings.Contains(runGitOutput(t, root, "cat-file", "-p", ":secret.txt"), "BACKLOT-ENCRYPTED-V1") {
+		t.Fatal("staged secret blob is not encrypted")
+	}
+	mustRunGit(t, root, "commit", "-m", "Encrypt archive")
+
+	out.Reset()
+	errOut.Reset()
+	if code := Run([]string{"encryption", "disable", "--root", root}, &out, &errOut); code != 0 {
+		t.Fatalf("encryption disable exit code = %d, stderr = %s", code, errOut.String())
+	}
+	if _, err := encryption.LoadMetadata(root); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("metadata after disable error = %v, want missing", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".gitattributes")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf(".gitattributes after disable error = %v, want missing", err)
+	}
+	if got := runGitOutput(t, root, "cat-file", "-p", ":secret.txt"); got != "secret" {
+		t.Fatalf("staged secret after disable = %q", got)
+	}
+	if got := runGitOutput(t, root, "diff", "--cached", "--name-status"); !strings.Contains(got, "D\t.backlot-encryption.json") || !strings.Contains(got, "D\t.gitattributes") {
+		t.Fatalf("disable staged metadata removals = %q", got)
+	}
+	if got, err := gitutil.RunGit(root, "config", "--get", "filter.backlot.required"); err == nil {
+		t.Fatalf("filter.backlot.required after disable = %q", got)
+	}
+	if !strings.Contains(out.String(), "Backlot archive encryption disabled") {
+		t.Fatalf("disable output = %q", out.String())
 	}
 }
 

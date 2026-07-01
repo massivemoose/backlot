@@ -109,6 +109,7 @@ func backlotRouter(stdout, stderr io.Writer, build BuildInfo) *chomp.Router {
 			run:     func(args []string) error { return runEncrypt(args, os.Stdin, stdout) },
 			usage:   printEncryptUsage,
 		},
+		encryptionRouter(stdout, stderr),
 		runnableCommand{
 			name:    "init",
 			summary: "Initialize a Backlot archive",

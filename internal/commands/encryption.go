@@ -11,6 +11,19 @@ import (
 	"github.com/massivemoose/chomp"
 )
 
+func encryptionRouter(stdout, stderr io.Writer) *chomp.Router {
+	return chomp.NewRouter(
+		"encryption",
+		"Manage archive encryption.",
+		runnableCommand{
+			name:    "disable",
+			summary: "Disable archive encryption",
+			run:     func(args []string) error { return runEncryptionDisable(args, stdout, stderr) },
+			usage:   printEncryptionDisableUsage,
+		},
+	)
+}
+
 func runEncrypt(args []string, stdin io.Reader, stdout io.Writer) error {
 	root, path, err := parseEncryptionFilterArgs("encrypt", args)
 	if err != nil {

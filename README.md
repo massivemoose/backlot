@@ -170,6 +170,15 @@ history, commit messages, timestamps, and approximate object sizes remain
 visible. Locking also does not rewrite old history; archive commits made before
 `backlot lock` may still contain plaintext.
 
+To return future syncs to plaintext, run:
+
+```sh
+backlot encryption disable
+backlot sync -m "Disable Backlot archive encryption"
+```
+
+This does not rewrite old encrypted history.
+
 ## Automatic Sync On macOS And Linux
 
 Auto-sync is opt-in background sync for macOS and Linux. macOS uses a
@@ -341,6 +350,7 @@ backlot starter apply [--root PATH] [--dry-run]
 backlot status [--root PATH]
 backlot lock [--root PATH]
 backlot unlock [--root PATH] [--recovery-key-file PATH]
+backlot encryption disable [--root PATH]
 backlot sync [--root PATH] [-m MESSAGE] [--quiet]
 backlot sync [--root PATH] --continue
 backlot sync [--root PATH] --abort
@@ -362,6 +372,7 @@ backlot version
 - `status` shows the current repo's Backlot state.
 - `lock` enables local archive encryption and prints the recovery key once.
 - `unlock` restores local key access and plaintext worktrees for encrypted archives.
+- `encryption disable` stages the archive to sync plaintext contents going forward.
 - `sync` pulls, commits, rebases, and pushes the private archive; `--continue`
   and `--abort` recover interrupted rebase conflicts, while `--quiet`
   suppresses normal success output.

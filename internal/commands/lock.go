@@ -95,6 +95,61 @@ func runUnlock(args []string, stdout, stderr io.Writer) error {
 	return nil
 }
 
+func runEncryptionDisable(args []string, stdout, stderr io.Writer) error {
+	result, err := encryptionDisableSpec().Parse(args)
+	if err != nil {
+		return err
+	}
+	root, err := paths.BacklotRoot(result.String("root"))
+	if err != nil {
+		return err
+	}
+	if err := requireBacklotArchiveRoot(root); err != nil {
+		return err
+	}
+
+	meta, err := archivecrypt.LoadMetadata(root)
+	if err == nil {
+		key, err := archivecrypt.LoadLocalKey(root, meta.VaultID)
+		if errors.Is(err, archivecrypt.ErrKeyMissing) {
+			return fmt.Errorf("%w: encrypted Backlot archive is locked; run backlot unlock --root %s --recovery-key-file PATH", err, root)
+		}
+		if err != nil {
+			return err
+		}
+		if err := refreshEncryptedWorktree(root, key); err != nil {
+			return err
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+
+	if err := removeArchiveEncryptionFile(root, archivecrypt.MetadataFile); err != nil {
+		return err
+	}
+	if err := removeArchiveEncryptionFile(root, ".gitattributes"); err != nil {
+		return err
+	}
+	for _, key := range []string{
+		"filter.backlot.clean",
+		"filter.backlot.smudge",
+		"filter.backlot.required",
+	} {
+		if err := unsetGitConfigIfPresent(root, key); err != nil {
+			return err
+		}
+	}
+	if _, err := gitutil.RunGit(root, "add", "-A"); err != nil {
+		return err
+	}
+	if _, err := gitutil.RunGit(root, "add", "--renormalize", "-A"); err != nil {
+		return err
+	}
+	fmt.Fprintln(stdout, "Backlot archive encryption disabled")
+	fmt.Fprintln(stdout, "Run backlot sync to commit and sync plaintext archive contents.")
+	return nil
+}
+
 func ensureEncryptionMetadataAndKey(root string) (archivecrypt.Metadata, []byte, bool, error) {
 	meta, err := archivecrypt.LoadMetadata(root)
 	if err == nil {
@@ -267,6 +322,22 @@ func removeLocalEncryptionKey(root, vaultID string) error {
 	return nil
 }
 
+func removeArchiveEncryptionFile(root, name string) error {
+	err := os.Remove(filepath.Join(root, name))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	return err
+}
+
+func unsetGitConfigIfPresent(root, key string) error {
+	if _, err := gitutil.RunGit(root, "config", "--get-all", key); err != nil {
+		return nil
+	}
+	_, err := gitutil.RunGit(root, "config", "--unset-all", key)
+	return err
+}
+
 func defaultEncryptionFilterCommandPrefix() (string, error) {
 	binary, err := os.Executable()
 	if err != nil {
@@ -292,10 +363,20 @@ func unlockSpec() *chomp.Spec {
 		Positionals(0, 0)
 }
 
+func encryptionDisableSpec() *chomp.Spec {
+	return chomp.New("backlot", "encryption disable").
+		String("root", chomp.ValueName("path"), chomp.Description("Backlot root path")).
+		Positionals(0, 0)
+}
+
 func printLockUsage(w io.Writer) {
 	printSpecUsage(w, lockSpec())
 }
 
 func printUnlockUsage(w io.Writer) {
 	printSpecUsage(w, unlockSpec())
+}
+
+func printEncryptionDisableUsage(w io.Writer) {
+	printSpecUsage(w, encryptionDisableSpec())
 }
