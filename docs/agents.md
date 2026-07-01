@@ -1,5 +1,9 @@
 # Using Backlot With Coding Agents
 
+Use this when a coding agent can edit your project but asks for permission
+before reading or writing `.backlot/`. Backlot can preview and, for simple
+configs, apply the persistent sandbox grants for Codex CLI and Claude Code.
+
 Backlot exposes private project state through a `.backlot` symlink inside your
 project repo:
 
@@ -35,15 +39,30 @@ For one session:
 codex --cd /path/to/project --add-dir ~/.backlot
 ```
 
-For persistent setup, add this to `~/.codex/config.toml`:
+For persistent setup, prefer a named permission profile in
+`~/.codex/config.toml`:
 
 ```toml
-[sandbox_workspace_write]
-writable_roots = ["/Users/YOU/.backlot"]
+default_permissions = "workspace-backlot"
+
+[permissions.workspace-backlot.workspace_roots]
+"/Users/YOU/.backlot" = true
+
+[permissions.workspace-backlot.filesystem]
+":minimal" = "read"
+":tmpdir" = "write"
+":slash_tmp" = "write"
+
+[permissions.workspace-backlot.filesystem.":workspace_roots"]
+"." = "write"
+".git" = "read"
+".codex" = "read"
+".agents" = "read"
 ```
 
-If your config already has a `[sandbox_workspace_write]` section, add the
-Backlot root to that section instead of creating a second section.
+Older Codex configs may use `[sandbox_workspace_write]` with `writable_roots`.
+Backlot still recognizes that as a valid grant, but new config should use the
+permission profile form.
 
 Backlot can preview the Codex setup:
 
@@ -102,7 +121,7 @@ Start a fresh agent session after changing persistent settings so the agent
 reloads its config. Then ask it:
 
 ```txt
-Please create `.backlot/scratch/agent-permission-test.md` with the text
+Please create `.backlot/plans/agent-permission-test.md` with the text
 `This agent can write through the Backlot symlink.` Then read the file back.
 Do not edit any public repo files.
 ```

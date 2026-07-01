@@ -11,6 +11,8 @@ import (
 
 type codexAgent struct{}
 
+const codexBacklotPermissionProfile = "workspace-backlot"
+
 func (codexAgent) ID() string {
 	return "codex"
 }
@@ -26,9 +28,7 @@ func (codexAgent) OneSessionCommand(repoRoot, backlotRoot string) string {
 func (codexAgent) PersistentInstructions(backlotRoot string) string {
 	return fmt.Sprintf(`Add this to ~/.codex/config.toml:
 
-[sandbox_workspace_write]
-writable_roots = [%q]
-`, backlotRoot)
+%s`, codexPermissionProfileConfig(backlotRoot))
 }
 
 func (codexAgent) ConfigStatus(env Environment, backlotRoot string) ConfigStatus {
@@ -84,48 +84,42 @@ func codexConfigPath(env Environment) string {
 }
 
 func updateCodexConfig(text, backlotRoot string) (string, bool, error) {
-	quoted := fmt.Sprintf("%q", backlotRoot)
 	if codexConfigHasWritableRoot(text, backlotRoot) {
 		return text, false, nil
 	}
+	if codexConfigHasDefaultPermissions(text) {
+		return "", false, fmt.Errorf("Codex default_permissions is already set; paste this manually if you want Backlot added:\n%s", codexAgent{}.PersistentInstructions(backlotRoot))
+	}
 	if strings.TrimSpace(text) == "" {
-		return "[sandbox_workspace_write]\nwritable_roots = [" + quoted + "]\n", true, nil
+		return codexPermissionProfileConfig(backlotRoot), true, nil
 	}
 
 	lines := strings.SplitAfter(text, "\n")
-	tableStart, tableEnd := codexSandboxTableRange(lines)
-	if tableStart < 0 {
-		separator := ""
-		if !strings.HasSuffix(text, "\n") {
-			separator = "\n"
+	if tableStart := codexFirstTableLine(lines); tableStart >= 0 {
+		updated := append([]string{}, lines[:tableStart]...)
+		if len(updated) > 0 && !strings.HasSuffix(updated[len(updated)-1], "\n") {
+			updated[len(updated)-1] += "\n"
 		}
-		return text + separator + "\n[sandbox_workspace_write]\nwritable_roots = [" + quoted + "]\n", true, nil
+		updated = append(updated, "default_permissions = \""+codexBacklotPermissionProfile+"\"\n\n")
+		updated = append(updated, lines[tableStart:]...)
+		if !strings.HasSuffix(updated[len(updated)-1], "\n") {
+			updated[len(updated)-1] += "\n"
+		}
+		updated = append(updated, "\n"+codexPermissionProfileTables(backlotRoot))
+		return strings.Join(updated, ""), true, nil
 	}
 
-	for i := tableStart + 1; i < tableEnd; i++ {
-		trimmed := strings.TrimSpace(lines[i])
-		key, _, ok := strings.Cut(trimmed, "=")
-		if !ok || strings.TrimSpace(key) != "writable_roots" {
-			continue
-		}
-		if trimmed == "writable_roots = []" {
-			lines[i] = strings.Replace(lines[i], "[]", "["+quoted+"]", 1)
-			return strings.Join(lines, ""), true, nil
-		}
-		return "", false, fmt.Errorf("Codex writable_roots is already set; paste this manually if you want Backlot added:\n%s", codexAgent{}.PersistentInstructions(backlotRoot))
+	separator := ""
+	if !strings.HasSuffix(text, "\n") {
+		separator = "\n"
 	}
-
-	insert := "writable_roots = [" + quoted + "]\n"
-	updated := append([]string{}, lines[:tableStart+1]...)
-	if !strings.HasSuffix(updated[len(updated)-1], "\n") {
-		updated[len(updated)-1] += "\n"
-	}
-	updated = append(updated, insert)
-	updated = append(updated, lines[tableStart+1:]...)
-	return strings.Join(updated, ""), true, nil
+	return text + separator + "\n" + codexPermissionProfileConfig(backlotRoot), true, nil
 }
 
 func codexConfigHasWritableRoot(text, backlotRoot string) bool {
+	if codexPermissionProfileHasWritableRoot(text, backlotRoot) {
+		return true
+	}
 	lines := strings.SplitAfter(text, "\n")
 	tableStart, tableEnd := codexSandboxTableRange(lines)
 	if tableStart < 0 {
@@ -141,12 +135,81 @@ func codexConfigHasWritableRoot(text, backlotRoot string) bool {
 	return false
 }
 
+func codexPermissionProfileConfig(backlotRoot string) string {
+	return fmt.Sprintf(`default_permissions = %q
+
+%s`, codexBacklotPermissionProfile, codexPermissionProfileTables(backlotRoot))
+}
+
+func codexPermissionProfileTables(backlotRoot string) string {
+	return fmt.Sprintf(`[permissions.%s.workspace_roots]
+%q = true
+
+[permissions.%s.filesystem]
+":minimal" = "read"
+":tmpdir" = "write"
+":slash_tmp" = "write"
+
+[permissions.%s.filesystem.":workspace_roots"]
+"." = "write"
+".git" = "read"
+".codex" = "read"
+".agents" = "read"
+`, codexBacklotPermissionProfile, backlotRoot, codexBacklotPermissionProfile, codexBacklotPermissionProfile)
+}
+
+func codexConfigHasDefaultPermissions(text string) bool {
+	for _, line := range strings.Split(text, "\n") {
+		key, _, ok := strings.Cut(strings.TrimSpace(line), "=")
+		if ok && strings.TrimSpace(key) == "default_permissions" {
+			return true
+		}
+	}
+	return false
+}
+
+func codexPermissionProfileHasWritableRoot(text, backlotRoot string) bool {
+	if !strings.Contains(text, `default_permissions = "`+codexBacklotPermissionProfile+`"`) {
+		return false
+	}
+	lines := strings.SplitAfter(text, "\n")
+	tableStart, tableEnd := codexTableRange(lines, "[permissions."+codexBacklotPermissionProfile+".workspace_roots]")
+	if tableStart < 0 {
+		return false
+	}
+	for i := tableStart + 1; i < tableEnd; i++ {
+		key, value, ok := strings.Cut(strings.TrimSpace(lines[i]), "=")
+		if !ok || strings.TrimSpace(value) != "true" {
+			continue
+		}
+		unquoted, err := strconv.Unquote(strings.TrimSpace(key))
+		if err == nil && unquoted == backlotRoot {
+			return true
+		}
+	}
+	return false
+}
+
 func codexSandboxTableRange(lines []string) (int, int) {
+	return codexTableRange(lines, "[sandbox_workspace_write]")
+}
+
+func codexFirstTableLine(lines []string) int {
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
+			return i
+		}
+	}
+	return -1
+}
+
+func codexTableRange(lines []string, table string) (int, int) {
 	tableStart := -1
 	tableEnd := len(lines)
 	for i, line := range lines {
 		trimmed := strings.TrimSpace(line)
-		if trimmed == "[sandbox_workspace_write]" {
+		if trimmed == table {
 			tableStart = i
 			continue
 		}
