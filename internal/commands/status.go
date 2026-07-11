@@ -110,7 +110,10 @@ func collectProjectInfo(rootFlag string) (projectInfo, error) {
 	if err != nil {
 		return info, err
 	}
-	info.StateDir = paths.ProjectStateDir(info.BacklotRoot, info.ProjectKey)
+	info.StateDir, err = paths.ProjectStateDir(info.BacklotRoot, info.ProjectKey)
+	if err != nil {
+		return info, err
+	}
 	info.LinkDescription = paths.LinkDescription(filepath.Join(info.RepoRoot, ".backlot"), info.StateDir)
 	info.Excluded, _ = paths.ExcludeContains(info.RepoRoot, ".backlot")
 	info.StateRepo = stateRepoStatus(info.BacklotRoot)

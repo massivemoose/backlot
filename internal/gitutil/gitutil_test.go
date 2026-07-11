@@ -12,8 +12,10 @@ func TestNormalizeOrigin(t *testing.T) {
 	tests := map[string]string{
 		"git@github.com:massivemoose/ovek.git":       "github.com/massivemoose/ovek",
 		"https://github.com/massivemoose/ovek.git":   "github.com/massivemoose/ovek",
+		"https://github.com:443/massivemoose/ovek":   "github.com/massivemoose/ovek",
 		"https://github.com/massivemoose/ovek":       "github.com/massivemoose/ovek",
 		"ssh://git@github.com/massivemoose/ovek.git": "github.com/massivemoose/ovek",
+		"ssh://git@github.com:8443/acme/ovek.git":    "github.com@8443/acme/ovek",
 		"git@GitHub.com:MassiveMoose/Ovek.git":       "github.com/MassiveMoose/Ovek",
 	}
 
@@ -34,8 +36,24 @@ func TestNormalizeOriginRejectsUnsupportedRemote(t *testing.T) {
 	}
 }
 
+func TestNormalizeOriginKeepsNonDefaultPortsDistinct(t *testing.T) {
+	first, err := NormalizeOrigin("ssh://git.example.test:8443/acme/project.git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := NormalizeOrigin("ssh://git.example.test:9443/acme/project.git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == second {
+		t.Fatalf("non-default ports produced the same key %q", first)
+	}
+}
+
 func TestNormalizeOriginRejectsUnsafePathSegments(t *testing.T) {
 	tests := []string{
+		"git@..:massivemoose/backlot.git",
+		"ssh://../massivemoose/backlot.git",
 		"git@github.com:massivemoose/../private.git",
 		"https://github.com/massivemoose//backlot.git",
 		"https://github.com/massivemoose/backlot%0Astate.git",

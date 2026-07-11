@@ -51,6 +51,21 @@ func TestBacklotRootResolution(t *testing.T) {
 	}
 }
 
+func TestProjectStateDirRejectsEscapeAndSymlinkAncestor(t *testing.T) {
+	root := t.TempDir()
+	if _, err := ProjectStateDir(root, "../outside/project"); err == nil {
+		t.Fatal("ProjectStateDir accepted parent traversal")
+	}
+
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(root, "github.com")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ProjectStateDir(root, "github.com/acme/project"); err == nil {
+		t.Fatal("ProjectStateDir accepted symlink ancestor outside root")
+	}
+}
+
 func TestEnsureExcludeIsIdempotentAndPreservesContent(t *testing.T) {
 	repo := t.TempDir()
 	mustRunGit(t, repo, "init")

@@ -25,8 +25,23 @@ func BacklotRoot(flagValue string) (string, error) {
 	return cleanUserPath(value)
 }
 
-func ProjectStateDir(root, key string) string {
-	return filepath.Join(root, filepath.FromSlash(key))
+func ProjectStateDir(root, key string) (string, error) {
+	if key == "" || filepath.IsAbs(filepath.FromSlash(key)) {
+		return "", fmt.Errorf("unsafe Backlot project key %q", key)
+	}
+	rootPath, err := comparablePath(root)
+	if err != nil {
+		return "", err
+	}
+	candidate := filepath.Join(root, filepath.FromSlash(key))
+	candidatePath, err := comparablePath(candidate)
+	if err != nil {
+		return "", err
+	}
+	if !pathWithinOrEqual(candidatePath, rootPath) {
+		return "", fmt.Errorf("Backlot project key %q resolves outside archive root %s", key, root)
+	}
+	return candidate, nil
 }
 
 func ValidateLinkName(linkName string) error {
@@ -280,6 +295,31 @@ func cleanUserPath(value string) (string, error) {
 		value = abs
 	}
 	return filepath.Clean(value), nil
+}
+
+func comparablePath(path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	current := filepath.Clean(abs)
+	var suffix []string
+	for {
+		resolved, err := filepath.EvalSymlinks(current)
+		if err == nil {
+			parts := append([]string{resolved}, suffix...)
+			return filepath.Clean(filepath.Join(parts...)), nil
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return "", err
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return filepath.Clean(abs), nil
+		}
+		suffix = append([]string{filepath.Base(current)}, suffix...)
+		current = parent
+	}
 }
 
 func pathWithinOrEqual(path, root string) bool {

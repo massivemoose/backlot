@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -169,7 +170,20 @@ func normalizeURLRemote(remote string) (string, error) {
 	default:
 		return "", fmt.Errorf("unsupported remote scheme %q", parsed.Scheme)
 	}
-	return normalizeHostPath(parsed.Hostname(), parsed.Path)
+	host, err := normalizeRemoteHost(parsed.Hostname())
+	if err != nil {
+		return "", err
+	}
+	if port := parsed.Port(); port != "" {
+		number, err := strconv.Atoi(port)
+		if err != nil || number < 1 || number > 65535 {
+			return "", fmt.Errorf("unsupported remote port %q", port)
+		}
+		if strconv.Itoa(number) != defaultRemotePort(parsed.Scheme) {
+			host += "@" + strconv.Itoa(number)
+		}
+	}
+	return normalizeHostPathValue(host, parsed.Path)
 }
 
 func splitSCPRemote(remote string) (string, string, bool) {
@@ -193,7 +207,28 @@ func splitSCPRemote(remote string) (string, string, bool) {
 }
 
 func normalizeHostPath(host, path string) (string, error) {
+	var err error
+	host, err = normalizeRemoteHost(host)
+	if err != nil {
+		return "", err
+	}
+	return normalizeHostPathValue(host, path)
+}
+
+func normalizeRemoteHost(host string) (string, error) {
 	host = strings.ToLower(strings.TrimSpace(host))
+	if host == "" || host == "." || host == ".." || strings.ContainsAny(host, `/\@`) {
+		return "", fmt.Errorf("remote contains unsafe host %q", host)
+	}
+	for _, r := range host {
+		if r < 0x20 || r == 0x7f {
+			return "", fmt.Errorf("remote contains unsafe host %q", host)
+		}
+	}
+	return host, nil
+}
+
+func normalizeHostPathValue(host, path string) (string, error) {
 	path = strings.TrimSpace(path)
 	path = strings.TrimPrefix(path, "/")
 	path = strings.TrimSuffix(path, "/")
@@ -207,6 +242,21 @@ func normalizeHostPath(host, path string) (string, error) {
 		}
 	}
 	return host + "/" + path, nil
+}
+
+func defaultRemotePort(scheme string) string {
+	switch scheme {
+	case "http":
+		return "80"
+	case "https":
+		return "443"
+	case "ssh":
+		return "22"
+	case "git":
+		return "9418"
+	default:
+		return ""
+	}
 }
 
 func validateRemotePathSegment(segment string) error {
