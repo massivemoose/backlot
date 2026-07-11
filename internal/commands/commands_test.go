@@ -522,9 +522,11 @@ func TestAttachCreatesStateSymlinkAndExclude(t *testing.T) {
 
 	stateDir := filepath.Join(state, "github.com", "massivemoose", "ovek")
 	for _, path := range []string{
-		filepath.Join(stateDir, "notes.md"),
-		filepath.Join(stateDir, "llm"),
-		filepath.Join(stateDir, "scratch"),
+		filepath.Join(stateDir, "handoff.md"),
+		filepath.Join(stateDir, "state.md"),
+		filepath.Join(stateDir, "roadmap.md"),
+		filepath.Join(stateDir, "files.md"),
+		filepath.Join(stateDir, "plans"),
 	} {
 		if _, err := os.Stat(path); err != nil {
 			t.Fatalf("expected attach-created path %s: %v", path, err)
@@ -624,8 +626,11 @@ func TestAttachCopiesCustomStarterTemplate(t *testing.T) {
 		}
 	}
 	for _, path := range []string{
-		filepath.Join(stateDir, "notes.md"),
+		filepath.Join(stateDir, "handoff.md"),
+		filepath.Join(stateDir, "state.md"),
+		filepath.Join(stateDir, "files.md"),
 		filepath.Join(stateDir, "scratch"),
+		filepath.Join(stateDir, "plans"),
 	} {
 		if _, err := os.Stat(path); !os.IsNotExist(err) {
 			t.Fatalf("attach added built-in starter path despite custom template %s: %v", path, err)
@@ -802,9 +807,11 @@ func TestAttachDoesNotRecreateDeletedStarterFiles(t *testing.T) {
 
 	stateDir := filepath.Join(state, "github.com", "massivemoose", "ovek")
 	for _, path := range []string{
-		filepath.Join(stateDir, "notes.md"),
-		filepath.Join(stateDir, "llm"),
-		filepath.Join(stateDir, "scratch"),
+		filepath.Join(stateDir, "handoff.md"),
+		filepath.Join(stateDir, "state.md"),
+		filepath.Join(stateDir, "roadmap.md"),
+		filepath.Join(stateDir, "files.md"),
+		filepath.Join(stateDir, "plans"),
 	} {
 		if err := os.RemoveAll(path); err != nil {
 			t.Fatal(err)
@@ -819,9 +826,11 @@ func TestAttachDoesNotRecreateDeletedStarterFiles(t *testing.T) {
 	})
 
 	for _, path := range []string{
-		filepath.Join(stateDir, "notes.md"),
-		filepath.Join(stateDir, "llm"),
-		filepath.Join(stateDir, "scratch"),
+		filepath.Join(stateDir, "handoff.md"),
+		filepath.Join(stateDir, "state.md"),
+		filepath.Join(stateDir, "roadmap.md"),
+		filepath.Join(stateDir, "files.md"),
+		filepath.Join(stateDir, "plans"),
 	} {
 		if _, err := os.Stat(path); !os.IsNotExist(err) {
 			t.Fatalf("attach recreated deleted starter path %s: %v", path, err)
@@ -856,9 +865,11 @@ func TestAttachPreservesExistingCustomStateDir(t *testing.T) {
 	})
 
 	for _, path := range []string{
-		filepath.Join(stateDir, "notes.md"),
-		filepath.Join(stateDir, "llm"),
-		filepath.Join(stateDir, "scratch"),
+		filepath.Join(stateDir, "handoff.md"),
+		filepath.Join(stateDir, "state.md"),
+		filepath.Join(stateDir, "roadmap.md"),
+		filepath.Join(stateDir, "files.md"),
+		filepath.Join(stateDir, "plans"),
 	} {
 		if _, err := os.Stat(path); !os.IsNotExist(err) {
 			t.Fatalf("attach added starter path to custom state dir %s: %v", path, err)

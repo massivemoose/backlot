@@ -250,15 +250,17 @@ this:
 
 ~/.backlot/
   github.com/you/my-project/
-    notes.md
-    llm/
-    scratch/
+    handoff.md
+    state.md
+    roadmap.md
+    files.md
+    plans/
 ```
 
-`notes.md`, `llm/`, and `scratch/` are starter files only. Rename them, delete
-them, or add your own structure. Backlot does not enforce a layout inside a
-project's private workspace, and later `backlot attach` runs will not recreate
-starter files you removed.
+These are starter defaults only. Rename them, delete them, or add your own
+structure. Backlot does not enforce a layout inside a project's private
+workspace, and later `backlot attach` runs will not recreate starter files you
+removed.
 
 ### Custom Starters
 
@@ -267,11 +269,9 @@ Create your own `~/.backlot/.starter/` to customize new project workspaces:
 ```txt
 ~/.backlot/
   .starter/
-    notes.md
+    handoff.md
     roadmap.md
-    llm/
-      agent_state.md
-      prompts.md
+    prompts.md
     scripts/
 ```
 
@@ -302,7 +302,7 @@ this to `AGENTS.md`, `CLAUDE.md`, or your tool's project instructions:
 
 ```md
 Use `.backlot/` for private project context, notes, drafts, prompts, and agent state.
-Read `.backlot/notes.md` and relevant files under `.backlot/llm/` when starting work.
+Read `.backlot/handoff.md` and `.backlot/state.md` when starting work.
 Do not copy private `.backlot/` content into commits, PRs, issues, or public docs unless explicitly asked.
 ```
 
@@ -310,14 +310,11 @@ One simple layout:
 
 ```txt
 .backlot/
-  notes.md
+  handoff.md
+  state.md
   roadmap.md
-  llm/
-    agent_state.md
-    prompts.md
-  scratch/
-    experiments.md
-    local-scripts/
+  files.md
+  plans/
 ```
 
 The structure is yours. Backlot only provides the private place to keep it.
