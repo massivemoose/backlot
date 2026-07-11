@@ -441,6 +441,57 @@ func TestSyncFailsWhenEncryptionAttributesAreInactive(t *testing.T) {
 	}
 }
 
+func TestSyncContinueFailsWhenEncryptionAttributesAreInactive(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell filter helper is Unix-only")
+	}
+	root, remote, _ := createInterruptedSync(t)
+	remoteHead := runGitOutput(t, remote, "rev-parse", "HEAD")
+	restore := withEncryptionFilterHelper(t)
+	defer restore()
+
+	if _, _, _, err := ensureEncryptionMetadataAndKey(root); err != nil {
+		t.Fatal(err)
+	}
+	if err := configureEncryptionFilters(root); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".gitattributes"), []byte("README.md -filter -diff\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"sync", "--root", root, "--continue"}, &out, &errOut); code == 0 {
+		t.Fatalf("sync --continue succeeded with inactive encryption attributes, stdout = %s", out.String())
+	}
+	if !strings.Contains(errOut.String(), "Backlot archive encryption is misconfigured") {
+		t.Fatalf("sync --continue stderr = %q, want encryption misconfiguration", errOut.String())
+	}
+	if got := runGitOutput(t, remote, "rev-parse", "HEAD"); got != remoteHead {
+		t.Fatalf("remote advanced despite encryption failure: got %s, want %s", got, remoteHead)
+	}
+	if state, err := detectSyncState(root); err != nil || !state.Interrupted() {
+		t.Fatalf("sync state after refusal = %+v, %v; want interrupted", state, err)
+	}
+
+	notes := filepath.Join(root, "github.com", "massivemoose", "ovek", "notes.md")
+	if err := os.WriteFile(notes, []byte("resolved\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".gitattributes"), []byte(archiveAttributes), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	errOut.Reset()
+	if code := Run([]string{"sync", "--root", root, "--continue"}, &out, &errOut); code != 0 {
+		t.Fatalf("sync --continue exit code = %d, stderr = %s", code, errOut.String())
+	}
+	blob := runGitOutput(t, remote, "show", "HEAD:github.com/massivemoose/ovek/notes.md")
+	if !encryption.IsEncrypted([]byte(blob)) {
+		t.Fatalf("remote notes are plaintext after sync --continue: %q", blob)
+	}
+}
+
 func TestBacklotFilterHelper(t *testing.T) {
 	if os.Getenv("BACKLOT_FILTER_HELPER") != "1" {
 		return

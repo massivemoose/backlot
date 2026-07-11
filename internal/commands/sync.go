@@ -191,11 +191,17 @@ func runSyncContinue(root string, stdout io.Writer, quiet bool) error {
 	if !state.Interrupted() {
 		return fmt.Errorf("no interrupted Backlot sync to continue")
 	}
+	if err := ensureArchiveEncryptionReady(root); err != nil {
+		return err
+	}
 	if _, err := gitutil.RunGit(root, "add", "-A"); err != nil {
 		return syncGitError("staging resolved conflicts", root, err)
 	}
 	if _, err := gitutil.RunGit(root, "-c", "core.editor=true", "rebase", "--continue"); err != nil {
 		return syncGitError("rebase --continue", root, err)
+	}
+	if err := ensureArchiveEncryptionReady(root); err != nil {
+		return err
 	}
 	if _, err := gitutil.RunGit(root, "push"); err != nil {
 		return syncGitError("push", root, err)
