@@ -2,6 +2,7 @@ package commands
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -571,6 +572,62 @@ func TestAttachCreatesStateSymlinkAndExclude(t *testing.T) {
 			}
 		}
 	})
+}
+
+func TestAttachRejectsOriginThatEscapesArchiveRoot(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	tmp := t.TempDir()
+	state := filepath.Join(tmp, "state")
+	public := filepath.Join(tmp, "public")
+	mustRunBacklotInit(t, state)
+	mustRunGit(t, tmp, "init", public)
+	mustRunGit(t, public, "remote", "add", "origin", "git@..:owner/project.git")
+
+	withChdir(t, public, func() {
+		var out, errOut bytes.Buffer
+		if code := Run([]string{"attach", "--root", state}, &out, &errOut); code == 0 {
+			t.Fatalf("attach accepted escaping origin, stdout = %s", out.String())
+		}
+	})
+	if _, err := os.Stat(filepath.Join(tmp, "owner", "project")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("attach wrote outside archive root: %v", err)
+	}
+}
+
+func TestAttachUsesNewKeyForNonDefaultPort(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	tmp := t.TempDir()
+	state := filepath.Join(tmp, "state")
+	public := filepath.Join(tmp, "public")
+	mustRunBacklotInit(t, state)
+	mustRunGit(t, tmp, "init", public)
+	mustRunGit(t, public, "remote", "add", "origin", "ssh://git.example.test:8443/acme/project.git")
+
+	legacy := filepath.Join(state, "git.example.test", "acme", "project")
+	if err := os.MkdirAll(legacy, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	legacyNote := filepath.Join(legacy, "legacy.md")
+	if err := os.WriteFile(legacyNote, []byte("legacy\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	withChdir(t, public, func() {
+		var out, errOut bytes.Buffer
+		if code := Run([]string{"attach", "--root", state}, &out, &errOut); code != 0 {
+			t.Fatalf("attach exit code = %d, stderr = %s", code, errOut.String())
+		}
+	})
+	if _, err := os.Stat(filepath.Join(state, "git.example.test@8443", "acme", "project", projectMarkerName)); err != nil {
+		t.Fatalf("port-aware project state missing: %v", err)
+	}
+	if got, err := os.ReadFile(legacyNote); err != nil || string(got) != "legacy\n" {
+		t.Fatalf("legacy state changed: %q, %v", got, err)
+	}
 }
 
 func TestAttachCopiesCustomStarterTemplate(t *testing.T) {

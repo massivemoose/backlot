@@ -57,7 +57,10 @@ func runAttach(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 
-	stateDir := paths.ProjectStateDir(root, key)
+	stateDir, err := paths.ProjectStateDir(root, key)
+	if err != nil {
+		return err
+	}
 	starter, err := ensureStarterState(root, stateDir)
 	if err != nil {
 		return err

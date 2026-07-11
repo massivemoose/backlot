@@ -379,7 +379,10 @@ func currentAttachedProjectStateDir(root string) (string, bool) {
 	if err != nil {
 		return "", false
 	}
-	stateDir := paths.ProjectStateDir(root, key)
+	stateDir, err := paths.ProjectStateDir(root, key)
+	if err != nil {
+		return "", false
+	}
 	linkTarget, err := filepath.EvalSymlinks(filepath.Join(repoRoot, ".backlot"))
 	if err != nil {
 		return "", false

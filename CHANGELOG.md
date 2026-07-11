@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Non-default remote ports now produce distinct project keys. Existing state
+  stored under the old portless key must be moved manually when needed.
 - Added optional local archive encryption, sync guards, status reporting, and
   `backlot encryption disable`.
 - Updated the built-in starter layout for agent memory workflows.
@@ -13,4 +15,3 @@
 - Added opt-in macOS auto-sync with durable recovery state.
 - Added `backlot starter apply` for propagating custom starter templates.
 - Migrated command parsing to `chomp`.
-

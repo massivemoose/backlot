@@ -120,7 +120,12 @@ func runDoctor(args []string, stdout, stderr io.Writer) error {
 	}
 
 	if root != "" && projectKey != "" {
-		stateDir = paths.ProjectStateDir(root, projectKey)
+		if foundStateDir, err := paths.ProjectStateDir(root, projectKey); err == nil {
+			stateDir = foundStateDir
+		} else {
+			failCheck("project state is inside Backlot root")
+			fmt.Fprintf(stdout, "  Error: %v\n", err)
+		}
 	}
 	linkPath := ""
 	if repoRoot != "" {
