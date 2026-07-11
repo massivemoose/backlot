@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -233,15 +234,11 @@ func configureEncryptionFilters(root string) error {
 }
 
 func refreshEncryptedWorktree(root string, key []byte) error {
-	files, err := gitutil.RunGit(root, "ls-files")
+	files, err := trackedArchiveFiles(root)
 	if err != nil {
 		return err
 	}
-	for _, rel := range strings.Split(files, "\n") {
-		rel = strings.TrimSpace(rel)
-		if rel == "" {
-			continue
-		}
+	for _, rel := range files {
 		path := filepath.Join(root, filepath.FromSlash(rel))
 		info, err := os.Lstat(path)
 		if errors.Is(err, os.ErrNotExist) {
@@ -275,15 +272,11 @@ func refreshEncryptedWorktree(root string, key []byte) error {
 }
 
 func authenticateEncryptedWorktreeBlob(root string, key []byte) error {
-	files, err := gitutil.RunGit(root, "ls-files")
+	files, err := trackedArchiveFiles(root)
 	if err != nil {
 		return err
 	}
-	for _, rel := range strings.Split(files, "\n") {
-		rel = strings.TrimSpace(rel)
-		if rel == "" {
-			continue
-		}
+	for _, rel := range files {
 		path := filepath.Join(root, filepath.FromSlash(rel))
 		info, err := os.Lstat(path)
 		if errors.Is(err, os.ErrNotExist) {
@@ -309,6 +302,21 @@ func authenticateEncryptedWorktreeBlob(root string, key []byte) error {
 		return err
 	}
 	return nil
+}
+
+func trackedArchiveFiles(root string) ([]string, error) {
+	data, err := gitutil.RunGitRaw(root, "ls-files", "-z")
+	if err != nil {
+		return nil, err
+	}
+	parts := bytes.Split(data, []byte{0})
+	files := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if len(part) > 0 {
+			files = append(files, string(part))
+		}
+	}
+	return files, nil
 }
 
 func removeLocalEncryptionKey(root, vaultID string) error {

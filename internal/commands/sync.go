@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -450,14 +451,13 @@ func detectSyncState(root string) (syncState, error) {
 			return state, err
 		}
 	}
-	conflicts, err := gitutil.RunGit(root, "diff", "--name-only", "--diff-filter=U")
+	conflicts, err := gitutil.RunGitRaw(root, "diff", "--name-only", "--diff-filter=U", "-z")
 	if err != nil {
 		return state, syncGitError("conflict check", root, err)
 	}
-	for _, line := range strings.Split(conflicts, "\n") {
-		line = strings.TrimSpace(line)
-		if line != "" {
-			state.Conflicts = append(state.Conflicts, line)
+	for _, path := range bytes.Split(conflicts, []byte{0}) {
+		if len(path) > 0 {
+			state.Conflicts = append(state.Conflicts, string(path))
 		}
 	}
 	return state, nil
