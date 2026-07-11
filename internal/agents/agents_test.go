@@ -21,8 +21,9 @@ func TestSupportedAgentsRenderCommandsAndInstructions(t *testing.T) {
 			commandContains: "codex --cd /repo --add-dir /state",
 			configContains: []string{
 				`~/.codex/config.toml`,
-				`[sandbox_workspace_write]`,
-				`writable_roots = ["/state"]`,
+				`default_permissions = "workspace-backlot"`,
+				`[permissions.workspace-backlot.workspace_roots]`,
+				`"/state" = true`,
 			},
 		},
 		{
@@ -86,8 +87,17 @@ func TestCodexApplyConfigCreatesBackupAndAvoidsDuplicateRoots(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read config: %v", err)
 	}
-	if got := string(data); !strings.Contains(got, `writable_roots = ["/state"]`) {
-		t.Fatalf("config missing writable root:\n%s", got)
+	for _, want := range []string{
+		`default_permissions = "workspace-backlot"`,
+		`[permissions.workspace-backlot.workspace_roots]`,
+		`"/state" = true`,
+		`[permissions.workspace-backlot.filesystem.":workspace_roots"]`,
+		`"." = "write"`,
+		`".git" = "read"`,
+	} {
+		if got := string(data); !strings.Contains(got, want) {
+			t.Fatalf("config missing %q:\n%s", want, got)
+		}
 	}
 
 	result, err = agent.ApplyConfig(env, "/state", when)
@@ -117,7 +127,7 @@ func TestCodexApplyConfigIgnoresPathOutsideWritableRoots(t *testing.T) {
 		t.Fatal(err)
 	}
 	configPath := filepath.Join(configDir, "config.toml")
-	original := "notes = \"try /state later\"\n# writable_roots = [\"/state\"]\n[sandbox_workspace_write]\nwritable_roots_note = \"/state\"\n"
+	original := "notes = \"try /state later\"\n# workspace_roots = \"/state\"\n[permissions.other.workspace_roots]\n\"/state\" = false\n"
 	if err := os.WriteFile(configPath, []byte(original), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -139,8 +149,38 @@ func TestCodexApplyConfigIgnoresPathOutsideWritableRoots(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(data)
-	if !strings.Contains(text, `[sandbox_workspace_write]`) || !strings.Contains(text, `writable_roots = ["/state"]`) {
-		t.Fatalf("config missing applied writable root:\n%s", text)
+	if !strings.Contains(text, `default_permissions = "workspace-backlot"`) || !strings.Contains(text, `"/state" = true`) {
+		t.Fatalf("config missing applied permission profile:\n%s", text)
+	}
+	if strings.Index(text, `default_permissions = "workspace-backlot"`) > strings.Index(text, `[permissions.other.workspace_roots]`) {
+		t.Fatalf("default_permissions was inserted inside an existing table:\n%s", text)
+	}
+}
+
+func TestCodexConfigStatusAcceptsLegacyWritableRoots(t *testing.T) {
+	agent, ok := ByID("codex")
+	if !ok {
+		t.Fatal("codex agent missing")
+	}
+	home := t.TempDir()
+	configDir := filepath.Join(home, ".codex")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "config.toml"), []byte("[sandbox_workspace_write]\nwritable_roots = [\"/state\"]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	status := agent.ConfigStatus(Environment{HomeDir: home}, "/state")
+	if !status.HasGrant {
+		t.Fatal("ConfigStatus() HasGrant = false, want true for legacy writable root")
+	}
+	result, err := agent.ApplyConfig(Environment{HomeDir: home}, "/state", time.Now())
+	if err != nil {
+		t.Fatalf("ApplyConfig() error = %v", err)
+	}
+	if result.Changed {
+		t.Fatal("ApplyConfig() Changed = true, want false for legacy writable root")
 	}
 }
 
@@ -163,7 +203,7 @@ func TestApplyConfigRefusesBroadRoots(t *testing.T) {
 	}
 }
 
-func TestCodexApplyConfigRefusesComplexWritableRoots(t *testing.T) {
+func TestCodexApplyConfigRefusesExistingDefaultPermissions(t *testing.T) {
 	agent, ok := ByID("codex")
 	if !ok {
 		t.Fatal("codex agent missing")
@@ -174,14 +214,14 @@ func TestCodexApplyConfigRefusesComplexWritableRoots(t *testing.T) {
 		t.Fatal(err)
 	}
 	configPath := filepath.Join(configDir, "config.toml")
-	original := "[sandbox_workspace_write]\nwritable_roots = [\"/existing\", \"/other\"]\n"
+	original := "default_permissions = \"existing-profile\"\n"
 	if err := os.WriteFile(configPath, []byte(original), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
 	_, err := agent.ApplyConfig(Environment{HomeDir: home}, "/state", time.Now())
 	if err == nil {
-		t.Fatal("ApplyConfig() error = nil, want refusal for complex TOML")
+		t.Fatal("ApplyConfig() error = nil, want refusal for existing default_permissions")
 	}
 	data, readErr := os.ReadFile(configPath)
 	if readErr != nil {
@@ -192,7 +232,7 @@ func TestCodexApplyConfigRefusesComplexWritableRoots(t *testing.T) {
 	}
 }
 
-func TestCodexApplyConfigInsertsWritableRootsAfterTableWithoutTrailingNewline(t *testing.T) {
+func TestCodexApplyConfigAppendsProfileAfterExistingConfigWithoutTrailingNewline(t *testing.T) {
 	agent, ok := ByID("codex")
 	if !ok {
 		t.Fatal("codex agent missing")
@@ -203,7 +243,7 @@ func TestCodexApplyConfigInsertsWritableRootsAfterTableWithoutTrailingNewline(t 
 		t.Fatal(err)
 	}
 	configPath := filepath.Join(configDir, "config.toml")
-	if err := os.WriteFile(configPath, []byte("[sandbox_workspace_write]"), 0o644); err != nil {
+	if err := os.WriteFile(configPath, []byte("model = \"gpt-5\""), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -215,9 +255,9 @@ func TestCodexApplyConfigInsertsWritableRootsAfterTableWithoutTrailingNewline(t 
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "[sandbox_workspace_write]\nwritable_roots = [\"/state\"]\n"
-	if string(data) != want {
-		t.Fatalf("config = %q, want %q", data, want)
+	text := string(data)
+	if !strings.HasPrefix(text, "model = \"gpt-5\"\n\n") || !strings.Contains(text, `default_permissions = "workspace-backlot"`) {
+		t.Fatalf("config = %q, want existing config plus permission profile", text)
 	}
 }
 

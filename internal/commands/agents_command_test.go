@@ -38,7 +38,8 @@ func TestAgentsSetupToolPreviewPrintsExactInstructions(t *testing.T) {
 		"codex --cd",
 		"--add-dir /state",
 		"~/.codex/config.toml",
-		"writable_roots = [\"/state\"]",
+		`default_permissions = "workspace-backlot"`,
+		`"/state" = true`,
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("codex setup output missing %q:\n%s", want, text)

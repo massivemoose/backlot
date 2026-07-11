@@ -1,12 +1,16 @@
 # Backlot
 
-Your private workspace for public repos.
+Private project memory for public repos and coding agents.
 
 Backlot gives each project repo a local `.backlot/` directory for private
-notes, agent state, prompts, drafts, scratch files, and local scripts without
-putting that material in the project repo's Git history.
+handoffs, roadmap notes, drafts, prompts, and local scripts without putting
+that material in the project repo's Git history.
 
 One private archive. Many projects. No nested Git repo sprawl.
+
+- Keep agent handoffs and roadmap notes beside the code.
+- Let agents read private context without committing it.
+- Keep public `git status` clean.
 
 ## Contents
 
@@ -78,11 +82,16 @@ backlot init
 cd ~/code/my-project
 git remote get-url origin
 backlot attach
+backlot agents setup
 ```
 
 Your private workspace now lives at `.backlot/` inside the project repo and is
 stored under `~/.backlot`. Backlot uses your project repo's `origin` URL to
 choose a stable archive path such as `github.com/you/my-project`.
+`backlot agents setup` previews Codex and Claude sandbox config. Add
+`--tool codex --apply` or `--tool claude --apply` when you want Backlot to
+write supported persistent config; see [Using Backlot With Coding
+Agents](docs/agents.md).
 
 To back it up or use it across machines, create an empty private repo named
 `backlot-archive` on GitHub or your Git host. Do not initialize that repo with a
