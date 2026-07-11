@@ -12,18 +12,26 @@ import (
 )
 
 func RunGit(dir string, args ...string) (string, error) {
+	output, err := RunGitRaw(dir, args...)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(output)), nil
+}
+
+func RunGitRaw(dir string, args ...string) ([]byte, error) {
 	allArgs := gitArgs(dir, args...)
 	cmd := exec.Command("git", allArgs...)
 	cmd.Env = sanitizedGitEnv(os.Environ())
 	output, err := cmd.CombinedOutput()
-	text := strings.TrimSpace(string(output))
 	if err != nil {
+		text := strings.TrimSpace(string(output))
 		if text == "" {
-			return "", fmt.Errorf("git %s: %w", strings.Join(allArgs, " "), err)
+			return nil, fmt.Errorf("git %s: %w", strings.Join(allArgs, " "), err)
 		}
-		return "", fmt.Errorf("git %s: %w: %s", strings.Join(allArgs, " "), err, text)
+		return nil, fmt.Errorf("git %s: %w: %s", strings.Join(allArgs, " "), err, text)
 	}
-	return text, nil
+	return output, nil
 }
 
 func HasStagedChanges(dir string) (bool, error) {

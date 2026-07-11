@@ -1,9 +1,11 @@
 package gitutil
 
 import (
+	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -92,6 +94,30 @@ func TestRunGitIgnoresRepoRoutingEnvironment(t *testing.T) {
 	}
 	if filepath.Clean(got) != filepath.Clean(want) {
 		t.Fatalf("RunGit used routed repo = %q, want %q", got, repoA)
+	}
+}
+
+func TestRunGitRawPreservesNULDelimitedPaths(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Backlot does not support Windows")
+	}
+	repo := t.TempDir()
+	mustRunGitCommand(t, repo, "init")
+	names := []string{" leading.md", "line\nbreak.md", "trailing.md "}
+	for _, name := range names {
+		if err := os.WriteFile(filepath.Join(repo, name), []byte("test\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mustRunGitCommand(t, repo, "add", "-A")
+	got, err := RunGitRaw(repo, "ls-files", "-z")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range names {
+		if !bytes.Contains(got, append([]byte(name), 0)) {
+			t.Fatalf("raw Git output did not preserve %q: %q", name, got)
+		}
 	}
 }
 

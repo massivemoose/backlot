@@ -146,7 +146,7 @@ func TestUnlockWithWrongRecoveryKeyDoesNotPersistLocalKey(t *testing.T) {
 	clone := filepath.Join(tmp, "clone")
 	mustRunBacklotInit(t, seed)
 	configureGitIdentity(t, seed)
-	if err := os.WriteFile(filepath.Join(seed, "secret.txt"), []byte("secret\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(seed, "line\nbreak.txt"), []byte("secret\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -179,6 +179,52 @@ func TestUnlockWithWrongRecoveryKeyDoesNotPersistLocalKey(t *testing.T) {
 	}
 	if _, err := os.Stat(keyPath); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("wrong recovery key persisted at %s: %v", keyPath, err)
+	}
+}
+
+func TestUnlockPreservesWhitespaceAndNewlineFilenames(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Backlot does not support Windows")
+	}
+	tmp := t.TempDir()
+	seed := filepath.Join(tmp, "seed")
+	clone := filepath.Join(tmp, "clone")
+	mustRunBacklotInit(t, seed)
+	configureGitIdentity(t, seed)
+	files := map[string]string{
+		" leading.md":    "leading\n",
+		"line\nbreak.md": "newline\n",
+		"trailing.md ":   "trailing\n",
+	}
+	for name, content := range files {
+		if err := os.WriteFile(filepath.Join(seed, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	restore := withEncryptionFilterHelper(t)
+	defer restore()
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"lock", "--root", seed}, &out, &errOut); code != 0 {
+		t.Fatalf("lock exit code = %d, stderr = %s", code, errOut.String())
+	}
+	recovery := recoveryKeyFromOutput(t, out.String())
+	mustRunGit(t, seed, "commit", "-m", "Encrypt archive")
+	mustRunGit(t, tmp, "clone", seed, clone)
+	recoveryFile := filepath.Join(tmp, "recovery.key")
+	if err := os.WriteFile(recoveryFile, []byte(recovery+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	out.Reset()
+	errOut.Reset()
+	if code := Run([]string{"unlock", "--root", clone, "--recovery-key-file", recoveryFile}, &out, &errOut); code != 0 {
+		t.Fatalf("unlock exit code = %d, stderr = %s", code, errOut.String())
+	}
+	for name, want := range files {
+		if got := mustReadFile(t, filepath.Join(clone, name)); got != want {
+			t.Fatalf("%q after unlock = %q, want %q", name, got, want)
+		}
 	}
 }
 
